@@ -164,8 +164,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             default_module_name = 'tns.' + camel_to_snake(cls)
             module = config.get('module', default_module_name)
             module = importlib.import_module(module)
-            dependency = getattr(module, cls)()
-            dependency.configure(self, config)
+            dependency = getattr(module, cls)(**config)
+            # dependency.configure(self, config)
             dependencies.append(dependency)
         if len(dependencies) != len(set(dependencies)):
             raise ValueError(f'Configured {dependency_type} have duplicate names: {[d.name for d in dependencies]}')
