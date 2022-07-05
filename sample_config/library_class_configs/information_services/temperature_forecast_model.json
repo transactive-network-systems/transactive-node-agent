@@ -1,0 +1,9 @@
+{
+  "class_name": "TemperatureForecastModel",
+  "module_name": "temperature_forecast_model",
+  "name": "",
+  "location":  "",
+  "temperature_point_name": "",
+  "tmy_fallback_path": "",
+  "weather_file_path": null
+}

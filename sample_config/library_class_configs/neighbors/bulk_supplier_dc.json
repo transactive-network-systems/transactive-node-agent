@@ -1,0 +1,23 @@
+{
+  "class_name": "BulkSupplier_dc",
+  "module_name": "bulk_supplier_dc",
+  "convergence_threshold": 0.05,
+  "cost_parameters": null,
+  "default_vertices": null,
+  "demand_month": 1,
+  "demand_rate": 4.5,
+  "demand_threshold": 1e9,
+  "demand_threshold_coef": 1,
+  "description": "",
+  "effective_impedance": 0.0,
+  "friend": false,
+  "location": "",
+  "loss_factor": 0.01,
+  "maximum_power": 0.0,
+  "mechanism": "consensus",
+  "meter_points": null,
+  "minimum_power": 0.0,
+  "name": "",
+  "subclass": null,
+  "up_or_down": "unknown"
+}

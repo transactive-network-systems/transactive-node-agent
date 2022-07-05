@@ -1,19 +1,20 @@
-import logging
-import importlib
-import re
-
 import gevent
+import importlib
+import logging
 import pytz
+import re
+import sys
+
+from datetime import timedelta
 from dateutil import parser
 from tzlocal import get_localzone
-from datetime import timedelta
 
 from volttron.platform.agent import utils
-from volttron.platform.vip.agent import Agent
+from volttron.platform.vip.agent import Agent, Core
 
-from ...TNT_Version3.PyCode.TransactiveNode import TransactiveNode
-from ...TNT_Version3.PyCode.market_state import MarketState
-from ...TNT_Version3.PyCode.timer import Timer
+from tent.market_state import MarketState
+from tent.timer import Timer
+from tent.TransactiveNode import TransactiveNode
 
 utils.setup_logging()
 _log = logging.getLogger(__name__)
@@ -28,19 +29,24 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     The Transactive Node Agent handles configuration of the node and its services,
     provides access to messages on the VOLTTRON message bus, and runs the loop.
     """
-    def __init__(self, **kwargs):
-        Agent.__init__(self, **kwargs)
+    def __init__(self, config_path=None, *args, **kwargs):
+        _log.debug('in init')
+        Agent.__init__(self, *args, **kwargs)
+        _log.debug('Agent initialized')
         TransactiveNode.__init__(self)
+        _log.debug('Node initialized')
 
         # Initial State:
         self._stop_agent = False
 
         # Default configuration.
         self.db_topic = 'TNS'
+        self.transactive_operation_topic = f"{self.db_topic}/{self.name}/transactive_operation"
         self.transactive_record_topic = f'{self.db_topic}/{self.name}/transactive_record'
+        self.local_asset_topic = f"{self.db_topic}/{self.name}/local_assets"
+        self.market_balanced_price_topic = "{}/{}/market_balanced_prices".format(self.db_topic, self.name)
         self.subscribe_all_platforms = False
         self.tz = get_localzone()  # TODO: The Timer does not use aware date-times. This should be fixed.
-        self.run_gap = timedelta(minutes=10)  # Do not run if next scheduled run is closer than this (seconds)
         self.plots_active = False  # TODO: Do the plots actually belong in the agent code, if not where?
 
         self.simulation = False
@@ -67,55 +73,65 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
             # Agent Configurations:
             "db_topic": self.db_topic,
+            "transactive_operation_topic": self.transactive_operation_topic,
             "transactive_record_topic": self.transactive_record_topic,
             "subscribe_all_platforms": self.subscribe_all_platforms,
             "tz": self.tz,
-            "run_gap": self.run_gap.total_seconds(),  # TODO: Should this be a property of the market?
             "plots_active": self.plots_active,
-
-            # Simulation Parameters:
             "simulation": self.simulation,
-            "simulation_start_time": utils.format_timestamp(self.simulation_start_time),
-            "simulation_one_hour_in_seconds": self.simulation_one_hour_in_seconds
 
             # TODO: Add configuration in appropriate dependency class (probably ConsensusMarket):
             #  "reschedule_interval": self.reschedule_interval.total_seconds(),
         }
+        if self.simulation:
+            self.default_config["simulation_start_time"] = utils.format_timestamp(self.simulation_start_time)
+            self.default_config["simulation_one_hour_in_seconds"] = self.simulation_one_hour_in_seconds
+        _log.debug('TN: before set_default')
         self.vip.config.set_default("config", self.default_config)
+        _log.debug('TN: after set_default')
         self.vip.config.subscribe(self.configure_main, actions=["NEW", "UPDATE"], pattern="config")
+        _log.debug('TN: end of init')
 
     def configure_main(self, config_name, action, contents):
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
         self.vip.pubsub.unsubscribe("pubsub", None, None)
         config = self.default_config.copy()
         config.update(contents)
+
+        # TransactiveNode Configurations:
+        self.description = config.get('description', self.description)
+        self.mechanism = config.get('mechanism', self.mechanism)
+        self.name = config.get('name', self.name)
+        self.status = config.get('status', self.status)
+
         # Agent Configurations:
         self.db_topic = config.get('db_topic', self.db_topic)
-        self.transactive_record_topic = config.get('transactive_record_topic',
-                                                   f'{self.db_topic}/{config.get("name")}/transactive_record')
+        self.transactive_operation_topic = f"{self.db_topic}/{self.name}/transactive_operation"
+        self.transactive_record_topic = f'{self.db_topic}/{self.name}/transactive_record'
+        self.local_asset_topic = f"{self.db_topic}/{self.name}/local_assets"
+        self.market_balanced_price_topic = "{}/{}/market_balanced_prices".format(self.db_topic, self.name)
         self.subscribe_all_platforms = bool(config.get('subscribe_all_platforms', self.subscribe_all_platforms))
-        self.tz = pytz.timezone(config.get('tz', str(self.tz)))
-        self.run_gap = timedelta(seconds=float(config.get('run_gap', self.run_gap.total_seconds())))
+        self.tz = pytz.timezone(str(config.get('tz', self.tz)))
         self.plots_active = bool(config.get('plots_active', self.plots_active))
 
         # Simulation Configurations:
         self.simulation = bool(config.get('simulation', self.simulation))
-        self.simulation_start_time = parser.parse(config.get('simulation_start_time', self.simulation_start_time))
-        self.simulation_one_hour_in_seconds = int(config.get('simulation_one_hour_in_seconds',
-                                                             self.simulation_one_hour_in_seconds))
+        if self.simulation:
+            self.simulation_start_time = parser.parse(config.get('simulation_start_time', self.simulation_start_time))
+            self.simulation_one_hour_in_seconds = int(config.get('simulation_one_hour_in_seconds',
+                                                                 self.simulation_one_hour_in_seconds))
+        Timer.created_time = Timer.get_cur_time()
+        Timer.simulation = self.simulation
+        Timer.sim_start_time = self.simulation_start_time
+        Timer.sim_one_hr_in_sec = self.simulation_one_hour_in_seconds
 
         # TODO: Move these into appropriate dependency class (probably ConsensusMarket):
         #  reschedule_interval = float(config.get('reschedule_interval'))
         #  self.reschedule_interval = timedelta(seconds=reschedule_interval) if reschedule_interval \
         #   else self.reschedule_interval
 
-        # Configure TransactiveNode object
+        # Configure TransactiveNode Component Classes
         try:
-            self.description = config.get('description', self.description)
-            self.mechanism = config.get('mechanism', self.mechanism)
-            self.name = config.get('name', self.name)
-            self.status = config.get('status', self.status)
-
             self.meterPoints = self.configure_dependencies(config.get('meterPoints'), 'MeterPoints')
             self.informationServiceModels = self.configure_dependencies(config.get('informationServiceModels'),
                                                                         'InformationServiceModels')
@@ -126,18 +142,22 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             _log.error("ERROR PROCESSING CONFIGURATION {}".format(e))
             raise
 
+        # TODO: This could probably be pushed down to the market constructor, but other places that initialize markets
+        #  would need to be updated as well so it doesn't do all this twice.
         for market in self.markets:
-            if not market.upstairs_neighbor:  # TODO: Should this be checking the node for an upstairs neighbor?
-                # Schedule to run 1st time now (or next interval if it is too close to the end of the current interval).
-                next_exp_time = self.get_exp_start_time()
-                next_analysis_time = next_exp_time
-                if self.simulation:
-                    next_analysis_time = self.simulation_start_time
+            market.isNewestMarket = True
+            market.check_intervals()
+            market.check_marginal_prices(self)
+            #market.marketState = MarketState.Delivery  # TODO: Why is this setting the market to delivery at the start?
 
-                _log.debug("{} schedule to run at exp_time: {} analysis_time: {}".format(self.name,
-                                                                                         next_exp_time,
-                                                                                         next_analysis_time))
-                self.core.spawn_later(5, self.state_machine_loop)
+            delivery_start_time = market.marketClearingTime + market.deliveryLeadTime
+            next_analysis_time = self.simulation_start_time if self.simulation else delivery_start_time
+            _log.debug("{} schedule to run at exp_time: {} analysis_time: {}".format(self.name,
+                                                                                     delivery_start_time,
+                                                                                     next_analysis_time))
+            for p in market.marginalPrices:
+                _log.debug("Market name: {} Initial marginal prices: {}".format(market.name, p.value))
+        self.core.spawn_later(5, self.state_machine_loop)
 
     def configure_dependencies(self, configs, dependency_type):
         """Configures each dependency in passed list of configurations.
@@ -159,45 +179,32 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         if not configs:
             return dependencies
         for config in configs:
-            cls = config.get('class_name')
+            cls = config.pop('class_name')
             # TODO: What will be the default directory for classes in the TransactiveNodeAgent module?
             default_module_name = 'tns.' + camel_to_snake(cls)
-            module = config.get('module', default_module_name)
+            module = config.pop('module_name', default_module_name)
+            _log.debug(f'module_name is: {module}')
             module = importlib.import_module(module)
+            config['transactive_node'] = self
             dependency = getattr(module, cls)(**config)
-            # dependency.configure(self, config)
             dependencies.append(dependency)
-        if len(dependencies) != len(set(dependencies)):
+        dep_names = [d.name for d in dependencies]
+        if len(dep_names) != len(set(dep_names)):
             raise ValueError(f'Configured {dependency_type} have duplicate names: {[d.name for d in dependencies]}')
         return dependencies
 
-    def get_exp_start_time(self):
-        one_second = timedelta(seconds=1)
-        if self.simulation:
-            next_exp_time = Timer.get_cur_time() + one_second
-        else:
-            now = Timer.get_cur_time()
-            next_exp_time = now + self.run_gap
-            if next_exp_time.hour == now.hour:
-                next_exp_time = now + one_second
-            else:
-                _log.debug("{} did not run onstart because it's too late. Wait for next interval.".format(self.name))
-                next_exp_time = next_exp_time.replace(minute=0, second=0, microsecond=0)
-        return next_exp_time
-
     def state_machine_loop(self):
         # This is the entire timing logic. It relies on current market object's state machine method events()
-        # TODO: Building agent has a small snippet before this which needs to be handled (somewhere).
         while not self._stop_agent:  # a condition may be added to provide stops or pauses.
             markets_to_remove = []
-            for i in range(len(self.markets)):
-                self.markets[i].events(self)
+            for market in self.markets:
+                market.events(self)
                 # _log.debug("Markets: {}, Market name: {}, Market state: {}".format(len(self.markets),
                 #                                                                   self.markets[i].name,
                 #                                                                   self.markets[i].marketState))
 
-                if self.markets[i].marketState == MarketState.Expired:
-                    markets_to_remove.append(self.markets[i])
+                if market.marketState == MarketState.Expired:
+                    markets_to_remove.append(market)
                 # NOTE: A delay may be added, but the logic of the market(s) alone should be adequate to drive system
                 # activities
                 gevent.sleep(0.01)
@@ -205,3 +212,19 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
                 _log.debug("Market name: {}, Market state: {}. It will be removed shortly".format(mkt.name,
                                                                                                   mkt.marketState))
                 self.markets.remove(mkt)
+
+    @Core.receiver('onstop')
+    def onstop(self, sender, **kwargs):
+        self._stop_agent = True
+
+
+def main():
+    try:
+        utils.vip_main(TransactiveNodeAgent)
+    except Exception as e:
+        _log.exception(f'unhandled exception: {e}')
+
+
+if __name__ == '__main__':
+    # Entry point for script
+    sys.exit(main())

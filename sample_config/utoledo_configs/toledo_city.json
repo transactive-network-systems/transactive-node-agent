@@ -1,0 +1,320 @@
+{
+  "db_topic": "tnc",
+  "description": "",
+  "name": "",  # from config.
+  "simulation": false,
+  "simulation_one_hour_in_seconds": 3600,  # from config.
+  "simulation_start_time": "2022-02-06T10:00:00",  # from config.
+  "subscribe_all_platforms": true,
+  "tz": "UTC",
+  "meterPoints": [
+    {
+      # This meter does not seem to be used after being instantiated!?
+      "class_name": "TNSMeterPoint",
+      "module_name": "tns_meter_point",
+      "data_period_seconds": 10,
+      "description": "",
+      "external_platform": false,
+      "max_buffer_seconds": 3600,
+      "measurement_interval": 3600,
+      "measurement_type": "PowerReal",
+      "measurement_unit": "kWh",
+      "name": "CoRElectricMeter",
+      "point_name": "",
+      "scale_factor": 1.0,
+      "topic": ""
+    },
+    {
+      "class_name": "TNSMeterPoint",
+      "module_name": "tns_meter_point",
+      "data_period_seconds": 10,
+      "description": "BPA electricity to COR",
+      "external_platform": false,
+      "max_buffer_seconds": 3600,
+      "measurement_interval": 3600,
+      "measurement_type": "PowerReal",
+      "measurement_unit": "kWh",
+      "name": "BpaElectricityMeter",
+      "point_name": "",
+      "scale_factor": 1.0,
+      "topic": ""
+    }
+  ],
+  "informationServiceModels": [
+    {
+      "class_name": "DarkSkyTemperatureForecastModel",
+      "module_name": "dark_sky_temperature_forecast_model",
+      "name": "TemperatureForecast",
+      "location": "",
+      "temperature_point_name": "",
+      "tmy_fallback_path": "",
+      "weather_file_path": null,
+      "remote": {
+        "address": "",
+        "server_key": ""
+      },
+      "remote_platform": "",
+      "weather_vip": ""
+    }  # all values used are from config.
+  ],
+  "localAssets": [
+    {
+      "class_name": "OpenLoopLoadPredictor",
+      "module_name": "open_loop_load_predictor",
+      "scale_factor": 1,
+      "default_power": -100420,
+      "description": "Correlation model of bulk inelastic city load",
+      "information_services": ["TemperatureForecast"],
+      "maximum_power": -50000,
+      "minimum_power": -200000,
+      "name": "InelasticCityLoad",
+      "dowIntercept": [
+    144786,  # Monday
+    146281,  # Tuesday
+    146119,  # Wednesday
+    145577,  # Thursday
+    143896,  # Friday
+    139432,  # Saturday
+    138118   # Sunday
+  ],
+      # SEASON - Maps categorical SEASON to the lookup table as a function of MONTH.
+      "season": [
+    6,  # January   Winter
+    6,  # February  Winter
+    1,  # March     Spring
+    1,  # April     Spring
+    1,  # May       Spring
+    3,  # June      Summer
+    3,  # July      Summer
+    3,  # August    Summer
+    4,  # September Fall
+    4,  # October   Fall
+    4,  # November  Fall
+    6   # December  Winter
+  ],
+      "values": [
+    [-149652, 1245],
+    [-34392, -818],
+    [-131968, 1081],
+    [-124130, 874],
+    [-27203, -954],
+    [-1852, -1477],
+    [-142988, 1086],
+    [-31372, -932],
+    [-126688, 944],
+    [-122883, 811],
+    [-25943, -1024],
+    [-188, -1557],
+    [-138252, 992],
+    [-29081, -1007],
+    [-121841, 843],
+    [-112887, 631],
+    [-23465, -1101],
+    [3295, -1641],
+    [-149396, 1175],
+    [-25538, -1072],
+    [-115636, 737],
+    [-115148, 657],
+    [-19741, -1162],
+    [8626, -1712],
+    [-136063, 977],
+    [-14201, -1247],
+    [-114011, 726],
+    [-118325, 743],
+    [-8144, -1348],
+    [17847, -1803],
+    [-97348, 365],
+    [6257, -1497],
+    [-109584, 660],
+    [-105047, 612],
+    [6052, -1501],
+    [29707, -1847],
+    [-54845, -178],
+    [33539, -1777],
+    [-101447, 581],
+    [-91533, 465],
+    [22052, -1618],
+    [41432, -1898],
+    [-57767, -24],
+    [46722, -1836],
+    [-100225, 640],
+    [-85241, 410],
+    [29349, -1596],
+    [47070, -1913],
+    [-61391, 77],
+    [36055, -1570],
+    [-108147, 802],
+    [-86269, 453],
+    [28127, -1514],
+    [45690, -1852],
+    [-64123, 148],
+    [22501, -1315],
+    [-117944, 966],
+    [-86623, 485],
+    [24430, -1424],
+    [42484, -1776],
+    [-71313, 274],
+    [11830, -1125],
+    [-128240, 1131],
+    [-88484, 537],
+    [22989, -1406],
+    [36535, -1635],
+    [-80831, 411],
+    [7198, -1072],
+    [-139864, 1288],
+    [-103026, 746],
+    [20709, -1379],
+    [31963, -1561],
+    [-88095, 512],
+    [4499, -1061],
+    [-151234, 1446],
+    [-112251, 879],
+    [18836, -1375],
+    [27314, -1492],
+    [-99170, 664],
+    [-3317, -946],
+    [-164503, 1628],
+    [-124095, 1048],
+    [15717, -1342],
+    [24360, -1463],
+    [-106954, 776],
+    [-4613, -960],
+    [-175312, 1778],
+    [-133986, 1196],
+    [17495, -1422],
+    [24628, -1504],
+    [-116071, 917],
+    [-6654, -932],
+    [-179354, 1858],
+    [-143246, 1349],
+    [19348, -1464],
+    [27482, -1573],
+    [-123134, 1043],
+    [-5856, -953],
+    [-179156, 1897],
+    [-149022, 1474],
+    [24897, -1552],
+    [34376, -1692],
+    [-128790, 1158],
+    [-5994, -955],
+    [-169346, 1833],
+    [-147953, 1540],
+    [30195, -1634],
+    [39201, -1738],
+    [-142610, 1398],
+    [-10283, -880],
+    [-159736, 1760],
+    [-155677, 1709],
+    [16822, -1322],
+    [34514, -1625],
+    [-145600, 1502],
+    [-5448, -970],
+    [-160091, 1825],
+    [-145741, 1600],
+    [9838, -1201],
+    [31034, -1596],
+    [-135428, 1378],
+    [-9947, -857],
+    [-154202, 1753],
+    [-143342, 1562],
+    [5620, -1181],
+    [27478, -1580],
+    [-137880, 1405],
+    [-20245, -716],
+    [-144872, 1605],
+    [-137881, 1393],
+    [-2343, -1119],
+    [20783, -1555],
+    [-135120, 1239],
+    [-27681, -716],
+    [-139164, 1408],
+    [-131328, 1165],
+    [-12468, -1056],
+    [8443, -1457],
+    [-145155, 1261],
+    [-33778, -735],
+    [-138392, 1271],
+    [-128342, 1009],
+    [-21707, -987],
+    [3295, -1418]
+  ]
+    }
+  ],
+  "markets": [
+    {
+      "class_name": "DayAheadAuction",
+      "module_name": "day_ahead_auction",
+      "activation_lead_time": 0,
+      "commitment": true,
+      "default_price": 0.0428,
+      "delivery_anchor_time": "02:00",  # "set to start of next hour"
+      "delivery_lead_time": 3600,
+      "duality_gap_threshold": 0.01,
+      "future_horizon": 86400,
+      "initial_market_state": "Inactive",
+      "interval_duration": 3600,
+      "intervals_to_clear": 24,
+      "market_clearing_interval": 86400,
+      "market_lead_time": 900,
+      "market_order": 1,
+      "market_series_name": "Day-Ahead_Auction",
+      "market_to_be_refined": null,
+      "method": "Interpolation",
+      "negotiation_lead_time": 480,
+      "prior_market_in_series": null,
+      "real_time_duration": 900
+    }
+  ],
+  "neighbors": [
+    {
+      "class_name": "TNSNeighbor",
+      "module_name": "tns_neighbor",
+      "convergence_threshold": 0.05,
+      "cost_parameters": null,
+      "default_vertices": [[0.045, 0.0, -10000.0]],
+      "demand_month": 1,
+      "demand_rate": 4.5,
+      "demand_threshold": 1e9,
+      "demand_threshold_coef": 1,
+      "description": "PNNL_Campus",
+      "effective_impedance": 0.0,
+      "friend": false,
+      "location": "",  # from config (tn.name)
+      "loss_factor": 0.01,
+      "maximum_power": 0.0,
+      "mechanism": "consensus",
+      "meter_points": null,
+      "minimum_power": -20000,
+      "name": "PNNL_Campus",
+      "subclass": null,
+      "transactive": true,
+      "up_or_down": "downstream",
+      "subscription_topic_postfix": "demand",
+      "publication_topic_postfix": "supply"
+    },
+    {
+      "class_name": "BulkSupplier_dc",
+      "module_name": "bulk_supplier_dc",
+      "convergence_threshold": 0.0,
+      "cost_parameters": [2000.0, 0.0, 0.0],
+      # second default_vertex should be: [d1.marginalPrice / (1 - supplier.lossFactor), d1.cost + d2.power * (d1.marginalPrice + 0.5 * (d2.marginalPrice - d1.marginalPrice)), (1 - supplier.lossFactor) * supplier.maximumPower]
+      "default_vertices": [[0.04196, 2000.0, 0.0], []],
+      "demand_month": 1,
+      "demand_rate": 4.5,
+      "demand_threshold": 1e9,  # from config(monthly_peak_power)
+      "demand_threshold_coef": 1,  # from config (demand_threshold_coef)
+      "description": "The Bonneville Power Administration as electricity supplier to the City of Richland, WA",
+      "effective_impedance": 0.0,
+      "friend": false,
+      "location": "",
+      "loss_factor": 0.01,  # from config (supplier_loss_factor)
+      "maximum_power": 200800.0,
+      "mechanism": "consensus",
+      "meter_points": ["BpaElectricityMeter"],
+      "minimum_power": 0.0,
+      "name": "BPA",
+      "subclass": null,
+      "up_or_down": "upstream"
+    }
+  ]
+}

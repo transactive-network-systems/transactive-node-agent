@@ -1,0 +1,12 @@
+{
+  "class_name": "MeterPoint",
+  "module_name": "meter_point",
+  "data_period_seconds": 10,
+  "description: str": "",
+  "max_buffer_seconds: float": 3600,
+  "measurement_interval": 3600,
+  "measurement_type": "Unknown",
+  "measurement_unit": "Unknown",
+  "name": "",
+  "scale_factor": 1.0
+}

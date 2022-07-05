@@ -1,0 +1,14 @@
+{
+  "class_name": "DarkSkyTemperatureForecastModel",
+  "module_name": "dark_sky_temperature_forecast_model",
+  "location": "",
+  "temperature_point_name": "",
+  "tmy_fallback_path": "",
+  "weather_file_path": null,
+  "remote": {
+    "address": "",
+    "server_key": ""
+  },
+  "remote_platform": "",
+  "weather_vip": ""
+}

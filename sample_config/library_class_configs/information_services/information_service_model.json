@@ -1,0 +1,16 @@
+{
+  "class_name": "InformationServiceModel",
+  "module_name": "information_service_model",
+  "address": "", 
+  "description": "", 
+  "information_type": "Unknown",
+  "information_units": "Unknown",
+  "license_key": "", 
+  "next_query_time": null,
+  "service_expiration_date": null,
+  "update_period": 3600,
+  "file": "", 
+  "name": "", 
+  "next_scheduled_update": null,
+  "update_interval": 3600
+}
