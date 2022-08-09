@@ -1,7 +1,9 @@
 import sys
-import tent.day_ahead_auction as day_ahead_auction
-from transactive_node.tns_real_time_auction import TNSRealTimeAuction
-from transactive_node.tns_auction import TNSAuction
+
+import tent.market.day_ahead_auction as day_ahead_auction
+
+from tns_real_time_auction import TNSRealTimeAuction
+from tns_auction import TNSAuction
 
 sys.modules['tent.day_ahead_auction'].RealTimeAuction = TNSRealTimeAuction
 

@@ -1,8 +1,8 @@
-from tent.helpers import format_timestamp
-from tent.real_time_auction import RealTimeAuction
-from tent.timer import Timer
+from tent.market.real_time_auction import RealTimeAuction
+from tent.utils.helpers import format_timestamp
+from tent.utils.timer import Timer
 
-from transactive_node.tns_auction import TNSAuction
+from tns_auction import TNSAuction
 
 from volttron.platform.messaging import headers as headers_mod
 

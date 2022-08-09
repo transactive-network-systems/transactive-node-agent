@@ -5,16 +5,15 @@ import pytz
 import re
 import sys
 
-from datetime import timedelta
 from dateutil import parser
 from tzlocal import get_localzone
 
+from tent.enumerations.market_state import MarketState
+from tent.transactive_node import TransactiveNode
+from tent.utils.timer import Timer
+
 from volttron.platform.agent import utils
 from volttron.platform.vip.agent import Agent, Core
-
-from tent.market_state import MarketState
-from tent.timer import Timer
-from tent.TransactiveNode import TransactiveNode
 
 utils.setup_logging()
 _log = logging.getLogger(__name__)
@@ -148,7 +147,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             market.isNewestMarket = True
             market.check_intervals()
             market.check_marginal_prices(self)
-            #market.marketState = MarketState.Delivery  # TODO: Why is this setting the market to delivery at the start?
+            # market.marketState = MarketState.Delivery # TODO: Why is this setting the market to delivery at the start?
 
             delivery_start_time = market.marketClearingTime + market.deliveryLeadTime
             next_analysis_time = self.simulation_start_time if self.simulation else delivery_start_time

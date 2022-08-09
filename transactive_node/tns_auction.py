@@ -1,6 +1,6 @@
-from tent.auction import Auction
-from tent.helpers import format_timestamp
-from tent.timer import Timer
+from tent.market.auction import Auction
+from tent.utils.helpers import format_timestamp
+from tent.utils.timer import Timer
 
 from volttron.platform.messaging import headers as headers_mod
 

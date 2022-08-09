@@ -3,14 +3,14 @@ import logging
 from datetime import timedelta
 from typing import Union
 
-from tent.helpers import find_obj_by_ti, format_timestamp, production
-from tent.interval_value import IntervalValue
-from tent.local_asset_model import LocalAsset
-from tent.market_state import MarketState
-from tent.measurement_type import MeasurementType
-from tent.timer import Timer
+from tent.containers.interval_value import IntervalValue
+from tent.containers.vertex import Vertex
+from tent.enumerations.market_state import MarketState
+from tent.enumerations.measurement_type import MeasurementType
+from tent.local_asset import LocalAsset
+from tent.utils.timer import Timer
+from tent.utils.helpers import find_obj_by_ti, format_timestamp, production
 from tent.utils.log import setup_logging
-from tent.vertex import Vertex
 
 from volttron.platform.vip.agent.utils import build_agent
 from volttron.platform.agent.base_market_agent import MarketAgent
@@ -162,7 +162,8 @@ class TCCModel(LocalAsset):
                 weather_service = None
                 if len(tn.informationServiceModels) > 0:
                     weather_service = tn.informationServiceModels[0]
-                    weather_service.update_information(self.tnt_real_time_market)
+                    if not weather_service.predictedValues:
+                        weather_service.update_information(self.tnt_real_time_market)
                 _log.info("Market name: {} start_realtime_mixmarket Building At market START Market"
                           " marginal prices are: {}".format(mkt.name, self.real_time_price))
                 if weather_service is None:
@@ -181,21 +182,21 @@ class TCCModel(LocalAsset):
                     _log.debug("temps are {}".format(temps))
                     # TODO: Should this use tcc_agent?
                     tn.vip.pubsub.publish(peer='pubsub',
-                                      topic='mixmarket/start_new_cycle',
-                                      message={"prices": self.real_time_price,
-                                               "price_info": prices_tuple,
-                                               "market_intervals": time_intervals,
-                                               "temp": temps,
-                                               "Date": format_timestamp(now),
-                                               "correction_market": True})
+                                          topic='mixmarket/start_new_cycle',
+                                          message={"prices": self.real_time_price,
+                                                   "price_info": prices_tuple,
+                                                   "market_intervals": time_intervals,
+                                                   "temp": temps,
+                                                   "Date": format_timestamp(now),
+                                                   "correction_market": True})
 
                 # TODO: Remove this! Testing only!
                 self.real_time_reservation_callback(timestamp="2021-07-02 00:00:00",
-                                          market_name="electric_0",
-                                          buyer_seller="seller")
+                                                    market_name="electric_0",
+                                                    buyer_seller="seller")
                 self.real_time_offer_callback(timestamp="2021-07-02 00:00:00",
-                                          market_name="electric_0",
-                                          buyer_seller="seller")
+                                              market_name="electric_0",
+                                              buyer_seller="seller")
                 supply_curve = PolyLine()
                 supply_curve.add(Point(quantity=19.467139937430645, price=9.875727030740128))
                 supply_curve.add(Point(quantity=19.467139937430645, price=7.999302698874049))
@@ -321,8 +322,8 @@ class TCCModel(LocalAsset):
                                           market_name="electric_0",
                                           buyer_seller="seller")
                 self.electric_offer_callback(timestamp="2021-07-02 00:00:00",
-                                          market_name="electric_0",
-                                          buyer_seller="seller")
+                                             market_name="electric_0",
+                                             buyer_seller="seller")
                 for i in range(self.tcc_interval_count):
                     supply_curve = PolyLine()
                     supply_curve.add(Point(quantity=19.467139937430645, price=9.875727030740128))
@@ -372,12 +373,12 @@ class TCCModel(LocalAsset):
             if not self.day_ahead_clear_price_sent[market.name]:
                 # TODO: Should this use tcc_agent?
                 tn.vip.pubsub.publish(peer='pubsub',
-                                  topic=self.cleared_price_topic,
-                                  message={"prices": self.prices,
-                                           "price_info": prices_tuple,
-                                           "market_intervals": time_intervals,
-                                           "Date": format_timestamp(now),
-                                           "correction_market": False})
+                                      topic=self.cleared_price_topic,
+                                      message={"prices": self.prices,
+                                               "price_info": prices_tuple,
+                                               "market_intervals": time_intervals,
+                                               "Date": format_timestamp(now),
+                                               "correction_market": False})
                 self.day_ahead_clear_price_sent[market.name] = True
                 _log.info(f"Market for name: {market.name},"
                           f" published cleared price {self.day_ahead_clear_price_sent[market.name]}")
@@ -392,12 +393,12 @@ class TCCModel(LocalAsset):
             if not self.real_time_clear_price_sent.get(market.name, False):
                 # TODO: Should this use tcc_agent?
                 tn.vip.pubsub.publish(peer='pubsub',
-                                  topic=self.cleared_price_topic,
-                                  message={"prices": self.real_time_price,
-                                           "price_info": price_tuple,
-                                           "market_intervals": time_intervals,
-                                           "Date": format_timestamp(now),
-                                           "correction_market": True})
+                                      topic=self.cleared_price_topic,
+                                      message={"prices": self.real_time_price,
+                                               "price_info": price_tuple,
+                                               "market_intervals": time_intervals,
+                                               "Date": format_timestamp(now),
+                                               "correction_market": True})
 
                 self.real_time_clear_price_sent[market.name] = True
                 _log.info(f"Market for name: {market.name},"
@@ -695,7 +696,6 @@ class TCCModel(LocalAsset):
                 self.start_mixmarket(resend_balanced_prices, mkt)
             else:
                 self.start_real_time_mixmarket(resend_balanced_prices, mkt)
-
 
     # SN: Set Scheduled Power after mix market is done
     def set_scheduled_power(self, quantities, prices, curves, mkt):

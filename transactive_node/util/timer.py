@@ -68,6 +68,13 @@ class Timer(datetime):
 
         return cur_time
 
+    @classmethod
+    def set(cls, sim_one_hr_in_sec=1200, sim_start_time=None, simulation=False):
+        cls.created_time = datetime.now()
+        cls.sim_one_hr_in_sec = sim_one_hr_in_sec
+        cls.sim_start_time = sim_start_time
+        cls.simulation = simulation
+
 
 if __name__ == '__main__':
     from dateutil import parser

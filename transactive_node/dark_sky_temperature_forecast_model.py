@@ -3,7 +3,7 @@ import logging
 
 from dateutil import parser
 
-from tent.temperature_forecast_model import TemperatureForecastModel
+from tent.information_service_model.temperature_forecast_model import TemperatureForecastModel
 from tent.utils.log import setup_logging
 
 from volttron.platform.jsonrpc import RemoteError
@@ -33,7 +33,7 @@ class DarkSkyTemperatureForecastModel(TemperatureForecastModel):
 
     def query_weather_data(self):
         """
-        Use VOLTTRON DarkSky weather agent running on local or remote platform to get 24 hour forecast for weather data.
+        Use VOLTTRON DarkSky weather agent running on local or remote platform to get 24-hour forecast for weather data.
         """
         weather_results = self._rpc_handler()
         return self._parse_rpc_data(weather_results)

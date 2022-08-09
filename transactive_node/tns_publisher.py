@@ -9,12 +9,13 @@
 
 
 class Publisher(object):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         pass
+
 
 class TNSPublisher(Publisher):
     def __init__(self, *args, **kwargs):
-        super(TNSPublisher, self).__init__(*args, **kargs)
+        super(TNSPublisher, self).__init__(*args, **kwargs)
         pass
 
     def publish(self):

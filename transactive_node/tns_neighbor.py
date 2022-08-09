@@ -4,9 +4,10 @@ import logging
 from volttron.platform.agent import utils
 from volttron.platform.messaging import headers as headers_mod
 
-from tent.neighbor_model import Neighbor
-from tent.timer import Timer
-from tent.helpers import format_timestamp, json_econder
+from tent.neighbor import Neighbor
+from tent.utils.helpers import format_timestamp, json_encoder
+from tent.utils.timer import Timer
+
 
 utils.setup_logging()
 _log = logging.getLogger(__name__)
@@ -50,9 +51,8 @@ class TNSNeighbor(Neighbor):
         _log.debug(f'{tn.name} received new transactive signal from {self.name}: {curves}')
         # TODO: Do we need to run a callback on the TN if this is an upstairs neighbor?
 
-    def send_transactive_signal(self, market, this_transactive_node, topic):
-        transactive_records = super(TNSNeighbor, self).send_transactive_signal(market, this_transactive_node, topic)
-        msg = json.dumps(transactive_records, default=json_econder)
+    def publish_signal(self, transactive_records):
+        msg = json.dumps(transactive_records, default=json_encoder)
         msg = json.loads(msg)
         tn = self.tn()
         if tn:
