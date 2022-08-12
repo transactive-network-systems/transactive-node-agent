@@ -81,7 +81,7 @@ class Thermostat(object):
             self.room_temp = data[TIN]
             self.current_time = now
             self.error = False
-        except KeyError as ex:
+        except KeyError:
             _log.debug("Error for %s input data on topic %s", self.name, self.topic)
             self.error = True
 

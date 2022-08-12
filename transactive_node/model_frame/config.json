@@ -4,7 +4,7 @@
         {
             "model_type": "thermostat.thermostat",
             "topic": "devices/campus/building/thermostat",
-            "model_config" {
+            "model_config": {
                 "rated_power": 13.68,
                 "c3": [
                     0.0001404314886164651,

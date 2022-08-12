@@ -48,7 +48,6 @@ import numpy as np
 from typing import List
 
 from volttron.platform.agent import utils
-from volttron.platform.agent.math_utils import mean, stdev
 
 _log = logging.getLogger(__name__)
 utils.setup_logging()
@@ -98,5 +97,3 @@ class ModelFrame(object):
             except KeyError:
                 _log.debug("Error making prediction for %s", model.topic)
         return q
-
-

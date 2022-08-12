@@ -142,8 +142,6 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
             self.activeVertices = [x for x in self.activeVertices if x.timeInterval != time_interval]
             self.activeVertices.extend(vertices)
 
-        # 200929DJH: Trim the list of active vertices so that it will not grow indefinitely.
+        # Trim the list of active vertices so that it will not grow indefinitely.
         self.activeVertices = [x for x in self.activeVertices if x.market.marketState != MarketState.Expired]
 
-        av = [(x.timeInterval.name, x.value.marginalPrice, x.value.power) for x in self.activeVertices]
-        # _log.debug("{} asset model active vertices are: {}".format(self.name, av))
