@@ -1,5 +1,7 @@
+import json
 import logging
 
+from datetime import datetime
 from typing import List
 
 from model_frame import ModelFrame
@@ -11,8 +13,9 @@ from tent.enumerations.market_state import MarketState
 from tent.enumerations.measurement_type import MeasurementType
 from tent.local_asset import LocalAsset
 from tent.market import Market
-from tent.utils.helpers import find_obj_by_ti
+from tent.utils.helpers import find_obj_by_ti, format_timestamp
 from tent.utils.log import setup_logging
+from tent.utils.timer import Timer
 
 from volttron.platform.agent.utils import parse_timestamp_string
 from volttron.platform.messaging import headers as headers_mod
@@ -22,12 +25,14 @@ _log = logging.getLogger(__name__)
 
 
 class ModelFrameAsset(LocalAsset, ModelFrame):
-    def __init__(self, model_configs: dict = None, temperature_forecast_name: str = '', *args, **kwargs):
+    def __init__(self, model_configs: dict = None, temperature_forecast_name: str = '',
+                 ilc_target_topic='record/target_agent', *args, **kwargs):
         model_configs = model_configs if model_configs else {}
         ModelFrame.__init__(self, model_configs, **kwargs)
         LocalAsset.__init__(*args, **kwargs)
 
         self.temperature_forecast_name = temperature_forecast_name
+        self.ilc_target_topic = ilc_target_topic
 
         if self.tn and self.tn():
             tn = self.tn()
@@ -144,4 +149,33 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
 
         # Trim the list of active vertices so that it will not grow indefinitely.
         self.activeVertices = [x for x in self.activeVertices if x.market.marketState != MarketState.Expired]
+
+    def setup_actuation(self):
+        for sp in self.scheduledPowers:
+            start_time = sp.timeInterval.startTime
+            end_time = sp.timeInterval.startTime + sp.timeInterval.duration
+            sp_id = f'{self.name}_{start_time}'
+            self._set_ilc_target(target_id=sp_id, target=sp.value, start=start_time, end=end_time)
+
+    def _set_ilc_target(self, target_id: str, target: float, start: datetime, end: datetime):
+        tn = self.tn()
+        headers = {
+            'Timestamp': Timer.now(),
+            'Datetime': Timer.now()
+        }
+        target = [
+            {
+                "id": target_id,
+                "target": target,
+                "start": format_timestamp(start),
+                "end": format_timestamp(end)
+            },
+            {
+                "value": {
+                    "tz": str(tn.tz)
+                }
+            }
+        ]
+        target_message = json.dumps(target)
+        tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic, headers=headers, message=target_message)
 
