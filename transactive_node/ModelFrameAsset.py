@@ -150,7 +150,7 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
         # Trim the list of active vertices so that it will not grow indefinitely.
         self.activeVertices = [x for x in self.activeVertices if x.market.marketState != MarketState.Expired]
 
-    def setup_actuation(self):
+    def actuate(self):
         for sp in self.scheduledPowers:
             start_time = sp.timeInterval.startTime
             end_time = sp.timeInterval.startTime + sp.timeInterval.duration
