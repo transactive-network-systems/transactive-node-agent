@@ -1,10 +1,9 @@
-import json
+import importlib
 import logging
 
-from datetime import datetime
 from typing import List
 
-from model_frame import ModelFrame
+from transactive_node.model_frame import ModelFrame
 
 from tent.containers.interval_value import IntervalValue
 from tent.containers.time_interval import TimeInterval
@@ -13,9 +12,8 @@ from tent.enumerations.market_state import MarketState
 from tent.enumerations.measurement_type import MeasurementType
 from tent.local_asset import LocalAsset
 from tent.market import Market
-from tent.utils.helpers import find_obj_by_ti, format_timestamp
+from tent.utils.helpers import find_obj_by_ti
 from tent.utils.log import setup_logging
-from tent.utils.timer import Timer
 
 from volttron.platform.agent.utils import parse_timestamp_string
 from volttron.platform.messaging import headers as headers_mod
@@ -25,24 +23,38 @@ _log = logging.getLogger(__name__)
 
 
 class ModelFrameAsset(LocalAsset, ModelFrame):
-    def __init__(self, model_configs: dict = None, temperature_forecast_name: str = '',
-                 ilc_target_topic='record/target_agent', *args, **kwargs):
+    def __init__(self,
+                 model_configs: dict = None,
+                 temperature_forecast_name: str = '',
+                 actuation_manager: dict = None,
+                 *args, **kwargs):
         model_configs = model_configs if model_configs else {}
         ModelFrame.__init__(self, model_configs, **kwargs)
-        LocalAsset.__init__(*args, **kwargs)
+        LocalAsset.__init__(self, *args, **kwargs)
 
         self.temperature_forecast_name = temperature_forecast_name
-        self.ilc_target_topic = ilc_target_topic
+        # self.actuation_method = actuation_method
+        # self.actuator_identity = actuator_identity
+        # self.ilc_target_topic = ilc_target_topic
 
         if self.tn and self.tn():
             tn = self.tn()
             for device_topic in self.models:
+                if 'Uncontrolled' in device_topic:
+                    continue
                 _log.info("Subscribing to " + device_topic)
-                tn.pubsub.subscribe(peer="pubsub", prefix=device_topic, callback=self.new_model_data)
+                tn.vip.pubsub.subscribe(peer="pubsub", prefix=device_topic, callback=self.new_model_data)
+
+            # Initialize Actuation Manager
+            if actuation_manager:
+                am_class = actuation_manager.pop('class_name', 'ActuationManager')
+                am_module = actuation_manager.pop('module_name', 'transactive_node.local_asset.actuation_manager')
+                module = importlib.import_module(am_module)
+                cls = getattr(module, am_class)
+                self.actuation_manager = cls(parent=self, transactive_node=tn, **actuation_manager)
 
     def new_model_data(self, peer, sender, bus, topic, header, message):
         """Ingest new data for models in ModelFrame."""
-        _log.info("Data Received for {}".format(topic))
         now = parse_timestamp_string(header[headers_mod.TIMESTAMP])
         data, meta = message
         if topic in self.models:
@@ -58,13 +70,20 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
         flexibility = self.model_flexibility(params=params)
         min_power = min(flexibility)
         max_power = max(flexibility)
+        if min_power == max_power:
+            min_power = min_power - 1e-10
         return [min_power, max_power]
 
-    def _get_price_flexibility(self, time_interval: TimeInterval, market: Market) -> List[float]:
-        interval_price = find_obj_by_ti(market.marginalPrices, time_interval)
-        effective_price = interval_price.value if interval_price else market.defaultPrice
-        min_price = 0.8 * effective_price
-        max_price = 1.2 * effective_price
+    def _get_price_flexibility(self, time_interval: TimeInterval, market: Market,
+                               multiplier: float = 1.0) -> List[float]:
+        # interval_price = find_obj_by_ti(market.marginalPrices, time_interval)
+        # effective_price = interval_price.value if interval_price else market.defaultPrice
+        # min_price = 0.8 * effective_price
+        # max_price = 1.2 * effective_price
+        start_time = time_interval.startTime
+        average_price, standard_deviation = market.priceModel.get(start_time)
+        min_price = average_price - (multiplier * standard_deviation)
+        max_price = average_price + (multiplier * standard_deviation)
         return [min_price, max_price]
 
     def _create_vertices(self, power_flexibility: List[float], price_flexibility: List[float]) -> List[Vertex]:
@@ -121,6 +140,8 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
         # Remove expired intervals to prevent the list of scheduled powers from growing indefinitely:
         self.scheduledPowers = [x for x in self.scheduledPowers if x.market.marketState != MarketState.Expired]
 
+        self.scheduleCalculated = True
+
     def update_vertices(self, market):
         """Create vertices to represent the asset's flexibility"""
         # Gather and sort active time intervals:
@@ -145,37 +166,78 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
 
             vertices = self._create_vertices(power_flexibility, price_flexibility)
             self.activeVertices = [x for x in self.activeVertices if x.timeInterval != time_interval]
-            self.activeVertices.extend(vertices)
+            for vertex in vertices:
+                self.activeVertices.append(
+                    IntervalValue(self, time_interval, market, MeasurementType.ActiveVertex, vertex)
+                )
 
         # Trim the list of active vertices so that it will not grow indefinitely.
         self.activeVertices = [x for x in self.activeVertices if x.market.marketState != MarketState.Expired]
 
-    def actuate(self):
-        for sp in self.scheduledPowers:
-            start_time = sp.timeInterval.startTime
-            end_time = sp.timeInterval.startTime + sp.timeInterval.duration
-            sp_id = f'{self.name}_{start_time}'
-            self._set_ilc_target(target_id=sp_id, target=sp.value, start=start_time, end=end_time)
+    def actuate(self, mkt: Market):
+        self.actuation_manager.actuate(mkt)
+        # # _log.info(f'Actuating via method: {self.actuation_method}')
+        # scheduled_powers_for_mkt = [sp for sp in self.scheduledPowers if sp.market is mkt]
+        # if self.actuation_method == 'ILC':
+        #     for sp in scheduled_powers_for_mkt:
+        #         # _log.debug(f'SETTING {sp.value} TARGET FOR {sp.timeInterval.startTime}')
+        #         start_time = sp.timeInterval.startTime
+        #         end_time = start_time + sp.timeInterval.duration
+        #         sp_id = f'{self.name}_{start_time}'
+        #         self._set_ilc_target(target_id=sp_id, target=sp.value, start=start_time, end=end_time)
+        # elif self.actuation_method == 'DirectRatio':
+        #     start_time = mkt.marketClearingTime + mkt.deliveryLeadTime
+        #     price = [p.value for p in mkt.marginalPrices if p.timeInterval.startTime == start_time][0]
+        #     vertex_prices = [av.value.marginalPrice for av in self.activeVertices
+        #                      if av.timeInterval.startTime == start_time]
+        #     min_price = min(vertex_prices)
+        #     max_price = max(vertex_prices)
+        #     price = min(max(price, min_price), max_price)  # clamp price within bid range.
+        #     cleared_price_ratio = (price - min_price) / (max_price - min_price)
+        #     for model in self.models.values():
+        #         if model.actuation_topic:
+        #             min_set_point, max_set_point = model.set_point_range(start_time)
+        #             # For cooling mode:
+        #             new_set_point = (cleared_price_ratio * (max_set_point - min_set_point)) + min_set_point
+        #             # TODO: For heating mode instead do commented code:
+        #             #new_set_point = max_set_point - (cleared_price_ratio * (
+        #             #            max_set_point - min_set_point))
+        #             self._direct_actuate(model.actuation_topic, new_set_point)
+        # else:
+        #     _log.warning(f'{self.name} received unknown actuation method: {self.actuation_method}')
+        #     pass
 
-    def _set_ilc_target(self, target_id: str, target: float, start: datetime, end: datetime):
-        tn = self.tn()
-        headers = {
-            'Timestamp': Timer.now(),
-            'Datetime': Timer.now()
-        }
-        target = [
-            {
-                "id": target_id,
-                "target": target,
-                "start": format_timestamp(start),
-                "end": format_timestamp(end)
-            },
-            {
-                "value": {
-                    "tz": str(tn.tz)
-                }
-            }
-        ]
-        target_message = json.dumps(target)
-        tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic, headers=headers, message=target_message)
-
+    # def _direct_actuate(self, actuation_topic, actuation_set_point):
+    #     if self.tn and self.tn():
+    #         tn = self.tn()
+    #         tn.vip.rpc.call(self.actuator_identity, 'set_point', requester_id=self.name, topic=actuation_topic,
+    #                         value=actuation_set_point)
+    #         # _log.debug(f'Actuation command of: {actuation_set_point} sent to {actuation_topic}')
+    #
+    # def _set_ilc_target(self, target_id: str, target: float, start: datetime, end: datetime):
+    #     tn = self.tn()
+    #     headers = {
+    #         'Timestamp': format_timestamp(Timer.now()),
+    #         'Datetime': format_timestamp(Timer.now())
+    #     }
+    #     target = [
+    #         {
+    #             "value": {
+    #                 "id": target_id,
+    #                 "target": -target,
+    #                 "start": format_timestamp(start),
+    #                 "end": format_timestamp(end)
+    #             }
+    #         },
+    #         {
+    #             "value": {
+    #                 "units": "kW",
+    #                 "tz": str(tn.tz)
+    #             }
+    #         }
+    #     ]
+    #     try:
+    #         tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic,
+    #                           headers=headers, message=target)
+    #     except Exception as e:
+    #         _log.debug(f'Error publishing to target: {e}')

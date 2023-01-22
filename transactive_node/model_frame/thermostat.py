@@ -47,29 +47,51 @@ import numpy as np
 
 _log = logging.getLogger(__name__)
 utils.setup_logging()
-OAT = "OAT"
-CSP = "CSP"
+OAT = "OutdoorAirTemperature"
+CSP = "ZoneCoolingTemperatureSetPoint"
 HSP = "HSP"
-TIN = "TIN"
+TIN = "ZoneTemperature"
 
 
 class Thermostat(object):
-    def __init__(self, config, parent, **kwargs):
-        self.parent = parent
+    def __init__(self, config, **kwargs):
         self.name = "Thermostat"
         self.c1 = config["c1"]
         self.c2 = config["c2"]
         self.c3 = config["c3"]
         self.c4 = config["c4"]
-        self.oat = 0.
-        self.csp = 0
-        self.room_temp = 0
+        self.nominal_set_point = config.get('nominal_setpoint', 22.8)
+        self.max_set_point_offset = config.get('max_set_point_offset', 2.0)
+        self.oat = config.get("oat", 0.)
+        self.csp = config.get("csp", 22.8)
+        self.room_temp = config.get("room_temp", 22.8)
         self.current_time = None
         self.coefficients = {"c1", "c2", "c3", "c4"}
         self.rated_power = config["rated_power"]
-        self.n_points = config.get("demand_curve_points")
+        self.n_points = config.get("demand_curve_points", 2)
         self.topic = config.get("topic", None)
         self.error = False
+        self.actuation_topic = config.get('actuation_topic', None)
+
+    def predict_flexibility(self, params=None):
+        min_set_point, max_set_point = self.set_point_range()
+        csp_flex = np.linspace(min_set_point, max_set_point, num=self.n_points)
+        # _log.debug(f'csp_flex is: {csp_flex}')
+        return [self.predict_power(params, csp) for csp in csp_flex]
+
+    def predict_power(self, params=None, set_point=None):
+        params = params if params else {}
+        csp = set_point if set_point else self.csp
+        oat = self.oat if not params.get(OAT) else params.get(OAT)
+        temp = self.room_temp if not params.get(TIN) else params.get(TIN)
+        index = self.current_time.hour if not params.get('interval_time') else params.get('interval_time').hour
+        duty_cycle = min([1, max([0, self._get_q(oat, temp, csp, index)])])
+        power = duty_cycle * self.rated_power
+        return -power
+
+    def set_point_range(self, interval_start_time=None):
+        set_point = self.nominal_set_point  # TODO: Extend for time_based schedule.
+        return set_point - self.max_set_point_offset, set_point + self.max_set_point_offset
 
     def update_data(self, data, now):
         """
@@ -85,22 +107,7 @@ class Thermostat(object):
             _log.debug("Error for %s input data on topic %s", self.name, self.topic)
             self.error = True
 
-    def predict_flexibility(self, params=None):
-        csp_flex = np.linspace(self.csp - 2, self.csp + 2, num=self.n_points)
-        q = []
-        for csp in csp_flex:
-            prediction = self.predict_power(params, csp)
-            q.append(prediction)
-        return q
-
-    def predict_power(self, params=None, set_point=None):
-        csp = set_point if set_point else self.csp
-        oat = self.oat if not params.get(OAT) else params.get(OAT)
-        temp = self.room_temp if not params(TIN) else params.get(TIN)
-        index = self.current_time.hour if not params('interval_time') else params.get('interval_time').hour
-        power = self.get_q(oat, temp, csp, index)
-        return power
-
-    def get_q(self, oat, temp, temp_stpt, index):
+    def _get_q(self, oat, temp, temp_stpt, index):
+        # _log.debug(f'oat: {oat}, temp: {temp}, temp_stpt: {temp_stpt}, index: {index}')
         q = temp_stpt * self.c1[index] + temp * self.c2[index] + oat * self.c3[index] + self.c4[index]
         return q

@@ -34,7 +34,7 @@ class TNSNeighbor(Neighbor):
                                 callback=self.new_transactive_signal,
                                 all_platforms=tn.subscribe_all_platforms)
         _log.info(f'{tn.name} {self.name} neighbor subscribed to {self.subscribeTopic}')
-        _log.debug(f'{tn.name} {self.name} neighbor getDict: {self.getDict()}')
+        _log.debug(f'{tn.name} {self.name} neighbor get_dict: {self.get_dict()}')
 
     def new_transactive_signal(self, peer, sender, bus, topic, headers, message):
         tn = self.tn()
@@ -47,11 +47,11 @@ class TNSNeighbor(Neighbor):
         # start_of_cycle = message['start_of_cycle']
         # fail_to_converged = message['fail_to_converged']
 
-        self.receivedCurves = curves
-        _log.debug(f'{tn.name} received new transactive signal from {self.name}: {curves}')
-        # TODO: Do we need to run a callback on the TN if this is an upstairs neighbor?
+        self.receive_transactive_signal(tn, curves)
 
     def publish_signal(self, transactive_records):
+        _log.debug('IN TNS_NEIGHBOR.PUBLISH_SIGNAL.')
+        _log.debug(f'SELF.PUBLISH_TOPIC IS: {self.publishTopic}')
         msg = json.dumps(transactive_records, default=json_encoder)
         msg = json.loads(msg)
         tn = self.tn()

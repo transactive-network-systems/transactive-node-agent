@@ -45,7 +45,8 @@ import importlib
 import logging
 import numpy as np
 
-from typing import List
+from datetime import datetime
+from typing import Iterable, List
 
 from volttron.platform.agent import utils
 
@@ -63,8 +64,8 @@ class ModelFrame(object):
         if not config:
             return
         self.demand_curve_points = config.get('demand_curve_points', 2)
-        base_module = "transactive_utils.model_frame."
-        for model in config:
+        base_module = "transactive_node.model_frame."
+        for model in config['models']:
             try:
                 topic = model["topic"]
                 model_type = model["model_type"]
@@ -80,7 +81,7 @@ class ModelFrame(object):
     def model_flexibility(self, params: dict = None) -> List[float]:
         params = params if params else {}
         q = np.zeros((len(self.models), self.demand_curve_points))
-        for i, model in enumerate(self.models):
+        for i, model in enumerate(self.models.values()):
             try:
                 q[i, :] = model.predict_flexibility(params=params)
             except KeyError:
@@ -91,9 +92,27 @@ class ModelFrame(object):
     def model_power(self, params: dict = None) -> float:
         params = params if params else {}
         q = 0.0
-        for model in self.models:
+        for k, model in self.models.items():
             try:
                 q += model.predict_power(params=params, set_point=None)
+                # _log.debug(f'Power after {k}: {q}')
             except KeyError:
                 _log.debug("Error making prediction for %s", model.topic)
         return q
+
+#
+# class BaseModel(object):
+#     def __init__(self, actuation_topic: str = None):
+#         self.topic = actuation_topic
+#
+#     def predict_flexibility(self, params: dict = None) -> Iterable[float]:
+#         pass
+#
+#     def predict_power(self, params: dict = None, set_point: float = None) -> float:
+#         pass
+#
+#     def set_point_range(self, interval_start_time: datetime = None) -> Iterable[float]:
+#         pass
+#
+#     def update_data(self, data: dict, now: datetime) -> None:
+#         pass

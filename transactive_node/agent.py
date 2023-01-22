@@ -52,6 +52,7 @@ from dateutil import parser
 from tzlocal import get_localzone
 
 from tent.enumerations.market_state import MarketState
+from tent.market import Market
 from tent.transactive_node import TransactiveNode
 from tent.utils.timer import Timer
 
@@ -178,8 +179,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             self.informationServiceModels = self.configure_dependencies(config.get('informationServiceModels'),
                                                                         'InformationServiceModels')
             self.localAssets = self.configure_dependencies(config.get('localAssets'), 'LocalAssets')
-            self.markets = self.configure_dependencies(config.get('markets'), 'Markets')
             self.neighbors = self.configure_dependencies(config.get('neighbors'), 'Neighbors')
+            self.markets = self.configure_dependencies(config.get('markets'), 'Markets')
         except ValueError as e:
             _log.error("ERROR PROCESSING CONFIGURATION {}".format(e))
             raise
@@ -187,9 +188,6 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         # TODO: This could probably be pushed down to the market constructor, but other places that initialize markets
         #  would need to be updated as well so it doesn't do all this twice.
         for market in self.markets:
-            market.isNewestMarket = True
-            market.check_intervals()
-            market.check_marginal_prices(self)
             # market.marketState = MarketState.Delivery # TODO: Why is this setting the market to delivery at the start?
 
             delivery_start_time = market.marketClearingTime + market.deliveryLeadTime
@@ -198,7 +196,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
                                                                                      delivery_start_time,
                                                                                      next_analysis_time))
             for p in market.marginalPrices:
-                _log.debug("Market name: {} Initial marginal prices: {}".format(market.name, p.value))
+                _log.debug(f"Market: {market.name} has initial marginal prices {p.value}"
+                           f" for interval: {p.timeInterval.startTime}")
         self.core.spawn_later(5, self.state_machine_loop)
 
     def configure_dependencies(self, configs, dependency_type):
@@ -228,7 +227,10 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             _log.debug(f'module_name is: {module}')
             module = importlib.import_module(module)
             config['transactive_node'] = self
-            dependency = getattr(module, cls)(**config)
+            dependency_class = getattr(module, cls)
+            if issubclass(dependency_class, Market):
+                config['first_market_in_series'] = True
+            dependency = dependency_class(**config)
             dependencies.append(dependency)
         dep_names = [d.name for d in dependencies]
         if len(dep_names) != len(set(dep_names)):
@@ -236,24 +238,10 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         return dependencies
 
     def state_machine_loop(self):
-        # This is the entire timing logic. It relies on current market object's state machine method events()
-        while not self._stop_agent:  # a condition may be added to provide stops or pauses.
-            markets_to_remove = []
+        while not self._stop_agent:
             for market in self.markets:
                 market.events(self)
-                # _log.debug("Markets: {}, Market name: {}, Market state: {}".format(len(self.markets),
-                #                                                                   self.markets[i].name,
-                #                                                                   self.markets[i].marketState))
-
-                if market.marketState == MarketState.Expired:
-                    markets_to_remove.append(market)
-                # NOTE: A delay may be added, but the logic of the market(s) alone should be adequate to drive system
-                # activities
                 gevent.sleep(0.01)
-            for mkt in markets_to_remove:
-                _log.debug("Market name: {}, Market state: {}. It will be removed shortly".format(mkt.name,
-                                                                                                  mkt.marketState))
-                self.markets.remove(mkt)
 
     @Core.receiver('onstop')
     def onstop(self, sender, **kwargs):

@@ -148,7 +148,7 @@ class TCCModel(LocalAsset):
             initial_price = self.tnt_real_time_market.marginalPrices
             _log.debug("Building start_realtime_mixmarket:"
                        " initial startTime : {}".format(initial_price[0].timeInterval.startTime))
-            avg_price, std_dev = self.tnt_real_time_market.model_prices(initial_price[0].timeInterval.startTime)
+            avg_price, std_dev = self.tnt_real_time_market.priceModel.get(initial_price[0].timeInterval.startTime)
             prices_tuple = [(avg_price, std_dev)]
 
             self.real_time_price = [price[0].value]
@@ -276,7 +276,7 @@ class TCCModel(LocalAsset):
             prices_tuple = list()
             time_intervals = list()
             for x in range(len(initial_prices)):
-                avg_price, std_dev = market.model_prices(initial_prices[x].timeInterval.startTime)
+                avg_price, std_dev = market.priceModel.get(initial_prices[x].timeInterval.startTime)
                 prices_tuple.append((avg_price, std_dev))
                 time_intervals.append(initial_prices[x].timeInterval.startTime.strftime('%Y%m%dT%H%M%S'))
 
@@ -364,7 +364,7 @@ class TCCModel(LocalAsset):
         if market.name.startswith('Day-Ahead'):
             for idx, p in enumerate(market.marginalPrices):
                 self._building_market_prices[idx] = p.value
-                avg_price, std_dev = market.model_prices(p.timeInterval.startTime)
+                avg_price, std_dev = market.priceModel.get(p.timeInterval.startTime)
                 prices_tuple.append((avg_price, std_dev))
             self.prices = self._building_market_prices  # [p.value for p in prices]
             _log.info(f"Market for name: {market.name} CLEARED marginal prices are: {self.prices},"
@@ -386,7 +386,7 @@ class TCCModel(LocalAsset):
             price = market.marginalPrices
             # Get real time price from Real time market
             self.real_time_price = [price[0].value]
-            avg_price, std_dev = market.model_prices(price[0].timeInterval.startTime)
+            avg_price, std_dev = market.priceModel.get(price[0].timeInterval.startTime)
             price_tuple = [(avg_price, std_dev)]
             _log.info(f"Market for name: {market.name} CLEARED marginal price are: {self.real_time_price},"
                       f" flag: {self.real_time_clear_price_sent[market.name]}")
