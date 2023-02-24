@@ -61,6 +61,7 @@ class Thermostat(object):
         self.c3 = config["c3"]
         self.c4 = config["c4"]
         self.nominal_set_point = config.get('nominal_setpoint', 22.8)
+        self.unoccupied_set_point = config.get('unoccupied_set_point', self.nominal_set_point)
         self.max_set_point_offset = config.get('max_set_point_offset', 2.0)
         self.oat = config.get("oat", 0.)
         self.csp = config.get("csp", 22.8)
@@ -74,14 +75,20 @@ class Thermostat(object):
         self.actuation_topic = config.get('actuation_topic', None)
 
     def predict_flexibility(self, params=None):
-        min_set_point, max_set_point = self.set_point_range()
+        params = params if params else {}
+        if not params.get('occupied'):
+            min_set_point, max_set_point = self.unoccupied_set_point, self.unoccupied_set_point
+        else:
+            min_set_point, max_set_point = self.set_point_range()
         csp_flex = np.linspace(min_set_point, max_set_point, num=self.n_points)
-        # _log.debug(f'csp_flex is: {csp_flex}')
         return [self.predict_power(params, csp) for csp in csp_flex]
 
     def predict_power(self, params=None, set_point=None):
         params = params if params else {}
-        csp = set_point if set_point else self.csp
+        if not params.get('occupied'):
+            csp = self.unoccupied_set_point
+        else:
+            csp = set_point if set_point else self.csp
         oat = self.oat if not params.get(OAT) else params.get(OAT)
         temp = self.room_temp if not params.get(TIN) else params.get(TIN)
         index = self.current_time.hour if not params.get('interval_time') else params.get('interval_time').hour

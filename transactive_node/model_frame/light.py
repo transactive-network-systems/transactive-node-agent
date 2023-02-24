@@ -7,6 +7,7 @@ import numpy as np
 _log = logging.getLogger(__name__)
 utils.setup_logging()
 
+
 class Lighting(object):
     def __init__(self, config, **kwargs):
         self.rated_power = config["rated_power"]
@@ -35,6 +36,7 @@ class Lighting(object):
             power = set_point * self.rated_power
         return -power
 
+    # TODO: Make nominal setpoint max and double default offset max.
     def set_point_range(self, interval_start_time: datetime):
         index = interval_start_time.hour
         set_point = self.lighting_schedule[index]

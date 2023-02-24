@@ -16,3 +16,14 @@ class ExternalTargetActuationManager(ActuationManager):
 
     def set_target(self, target, start, end):
         pass
+
+    def release(self, mkt):
+        super(ExternalTargetActuationManager, self).release(mkt)
+        scheduled_powers_for_mkt = [sp for sp in self.parent.scheduledPowers if sp.market is mkt]
+        for sp in scheduled_powers_for_mkt:
+            start_time = sp.timeInterval.startTime
+            end_time = start_time + sp.timeInterval.duration
+            self.release_target(start=start_time, end=end_time)
+
+    def release_target(self, start, end):
+        pass

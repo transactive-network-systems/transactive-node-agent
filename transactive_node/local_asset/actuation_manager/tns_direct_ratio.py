@@ -28,3 +28,14 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
                                 value=new_set_point).get(timeout=15)
             except (RemoteError, gevent.Timeout, errors.VIPError) as ex:
                 _log.warning(f"Failed to set {target_id} - ex: {str(ex)}")
+
+    def direct_release(self, target_id):
+        if self.tn and self.tn():
+            tn = self.tn()
+            try:
+                tn.vip.rpc.call(self.actuator_identity,
+                                'revert_point',
+                                requester_id=self.parent.name,
+                                topic=target_id).get(timeout=15)
+            except (RemoteError, gevent.Timeout, errors.VIPError) as ex:
+                _log.warning(f"Failed to revert {target_id} - ex: {str(ex)}")

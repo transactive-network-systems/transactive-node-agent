@@ -4,6 +4,7 @@ import logging
 from typing import List
 
 from transactive_node.model_frame import ModelFrame
+from transactive_node.local_asset.occupancy_manager import OccupancyManager
 
 from tent.containers.interval_value import IntervalValue
 from tent.containers.time_interval import TimeInterval
@@ -27,6 +28,7 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
                  model_configs: dict = None,
                  temperature_forecast_name: str = '',
                  actuation_manager: dict = None,
+                 occupancy_manager: dict = None,
                  *args, **kwargs):
         model_configs = model_configs if model_configs else {}
         ModelFrame.__init__(self, model_configs, **kwargs)
@@ -36,6 +38,14 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
         # self.actuation_method = actuation_method
         # self.actuator_identity = actuator_identity
         # self.ilc_target_topic = ilc_target_topic
+
+        # Initialize Scheduler
+        if occupancy_manager:  # TODO: Implement default behavior if occupancy_manager is not specified (make an always occupied base class).
+            om_class = occupancy_manager.pop('class_name', 'OccupancyManager')
+            om_module = occupancy_manager.pop('module_name', 'transactive_node.local_asset.occupancy_manager')
+            module = importlib.import_module(om_module)
+            cls = getattr(module, om_class)
+            self.occupancy_manager: OccupancyManager = cls(**occupancy_manager)
 
         if self.tn and self.tn():
             tn = self.tn()
@@ -51,7 +61,8 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
                 am_module = actuation_manager.pop('module_name', 'transactive_node.local_asset.actuation_manager')
                 module = importlib.import_module(am_module)
                 cls = getattr(module, am_class)
-                self.actuation_manager = cls(parent=self, transactive_node=tn, **actuation_manager)
+                self.actuation_manager = cls(parent=self, transactive_node=tn, occupancy_manager=self.occupancy_manager,
+                                             **actuation_manager)
 
     def new_model_data(self, peer, sender, bus, topic, header, message):
         """Ingest new data for models in ModelFrame."""
@@ -62,11 +73,13 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
 
     def _get_scheduled_power_from_model(self, time_interval: TimeInterval, outside_air_temperature) -> float:
         """Return a schedule power value for one interval from a model."""
-        params = {'interval_time': time_interval.startTime, 'OAT': outside_air_temperature}
+        occupied = self.occupancy_manager.check_schedule(time_interval.startTime)
+        params = {'interval_time': time_interval.startTime, 'OAT': outside_air_temperature, 'occupied': occupied}
         return self.model_power(params=params)
 
     def _get_power_flexibility_from_model(self, time_interval: TimeInterval, outside_air_temperature) -> List[float]:
-        params = {'interval_time': time_interval.startTime, 'OAT': outside_air_temperature}
+        occupied = self.occupancy_manager.check_schedule(time_interval.startTime)
+        params = {'interval_time': time_interval.startTime, 'OAT': outside_air_temperature, 'occupied': occupied}
         flexibility = self.model_flexibility(params=params)
         min_power = min(flexibility)
         max_power = max(flexibility)
@@ -95,17 +108,6 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
 
     def schedule_power(self, market):
         # Determine powers of an asset in active time intervals.
-
-        # PRESUMPTIONS:
-        # - Active time intervals exist and have been updated
-        # - Marginal prices exist and have been updated.
-        #   NOTE: Marginal prices are used only for elastic assets. This base class is provided for the simplest asset
-        #         having constant power. It MUST be extended to represent dynamic and elastic asset behaviors.
-        #   NOTE: (1911DJH) This requirement is loosened upon recognizing that auction markets have no forward prices
-        #         available at the time an asset is called to schedule its power, i.e., to prepare its bid. This can be
-        #         resolved by letting an asset model use its markets' price forecast models for forward intervals in
-        #         which locational marginal prices have not yet been discovered.
-        # OUTPUTS:
         # - Updates self.scheduledPowers - the schedule of power consumed
 
         # Gather and sort the active time intervals:
@@ -176,68 +178,3 @@ class ModelFrameAsset(LocalAsset, ModelFrame):
 
     def actuate(self, mkt: Market):
         self.actuation_manager.actuate(mkt)
-        # # _log.info(f'Actuating via method: {self.actuation_method}')
-        # scheduled_powers_for_mkt = [sp for sp in self.scheduledPowers if sp.market is mkt]
-        # if self.actuation_method == 'ILC':
-        #     for sp in scheduled_powers_for_mkt:
-        #         # _log.debug(f'SETTING {sp.value} TARGET FOR {sp.timeInterval.startTime}')
-        #         start_time = sp.timeInterval.startTime
-        #         end_time = start_time + sp.timeInterval.duration
-        #         sp_id = f'{self.name}_{start_time}'
-        #         self._set_ilc_target(target_id=sp_id, target=sp.value, start=start_time, end=end_time)
-        # elif self.actuation_method == 'DirectRatio':
-        #     start_time = mkt.marketClearingTime + mkt.deliveryLeadTime
-        #     price = [p.value for p in mkt.marginalPrices if p.timeInterval.startTime == start_time][0]
-        #     vertex_prices = [av.value.marginalPrice for av in self.activeVertices
-        #                      if av.timeInterval.startTime == start_time]
-        #     min_price = min(vertex_prices)
-        #     max_price = max(vertex_prices)
-        #     price = min(max(price, min_price), max_price)  # clamp price within bid range.
-        #     cleared_price_ratio = (price - min_price) / (max_price - min_price)
-        #     for model in self.models.values():
-        #         if model.actuation_topic:
-        #             min_set_point, max_set_point = model.set_point_range(start_time)
-        #             # For cooling mode:
-        #             new_set_point = (cleared_price_ratio * (max_set_point - min_set_point)) + min_set_point
-        #             # TODO: For heating mode instead do commented code:
-        #             #new_set_point = max_set_point - (cleared_price_ratio * (
-        #             #            max_set_point - min_set_point))
-        #             self._direct_actuate(model.actuation_topic, new_set_point)
-        # else:
-        #     _log.warning(f'{self.name} received unknown actuation method: {self.actuation_method}')
-        #     pass
-
-    # def _direct_actuate(self, actuation_topic, actuation_set_point):
-    #     if self.tn and self.tn():
-    #         tn = self.tn()
-    #         tn.vip.rpc.call(self.actuator_identity, 'set_point', requester_id=self.name, topic=actuation_topic,
-    #                         value=actuation_set_point)
-    #         # _log.debug(f'Actuation command of: {actuation_set_point} sent to {actuation_topic}')
-    #
-    # def _set_ilc_target(self, target_id: str, target: float, start: datetime, end: datetime):
-    #     tn = self.tn()
-    #     headers = {
-    #         'Timestamp': format_timestamp(Timer.now()),
-    #         'Datetime': format_timestamp(Timer.now())
-    #     }
-    #     target = [
-    #         {
-    #             "value": {
-    #                 "id": target_id,
-    #                 "target": -target,
-    #                 "start": format_timestamp(start),
-    #                 "end": format_timestamp(end)
-    #             }
-    #         },
-    #         {
-    #             "value": {
-    #                 "units": "kW",
-    #                 "tz": str(tn.tz)
-    #             }
-    #         }
-    #     ]
-    #     try:
-    #         tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic,
-    #                           headers=headers, message=target)
-    #     except Exception as e:
-    #         _log.debug(f'Error publishing to target: {e}')

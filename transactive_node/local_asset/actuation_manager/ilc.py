@@ -1,6 +1,7 @@
 import logging
 
 from datetime import datetime
+from typing import Union
 
 from tent.utils.helpers import format_timestamp
 from tent.utils.log import setup_logging
@@ -17,7 +18,7 @@ class ILCActuationManager(ExternalTargetActuationManager):
         super(ILCActuationManager, self).__init__(**kwargs)
         self.ilc_target_topic = ilc_target_topic
 
-    def set_target(self, target: float, start: datetime, end: datetime):
+    def set_target(self, target: Union[float, None], start: datetime, end: datetime):
         target_id: str = f'{self.parent.name}_{start}'
         tn = self.tn()
         headers = {
@@ -28,7 +29,7 @@ class ILCActuationManager(ExternalTargetActuationManager):
             {
                 "value": {
                     "id": target_id,
-                    "target": -target,
+                    "target": -target if target is not None else None,
                     "start": format_timestamp(start),
                     "end": format_timestamp(end)
                 }
@@ -45,3 +46,6 @@ class ILCActuationManager(ExternalTargetActuationManager):
                                   headers=headers, message=target)
         except Exception as e:
             _log.debug(f'Error publishing to target: {e}')
+
+    def release_target(self, start, end):
+        self.set_target(None, start, end)

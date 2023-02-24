@@ -1,4 +1,3 @@
-import importlib
 import logging
 import weakref
 
@@ -8,6 +7,8 @@ from tent.local_asset import LocalAsset
 from tent.transactive_node import TransactiveNode
 from tent.utils.log import setup_logging
 
+from transactive_node.local_asset.occupancy_manager import OccupancyManager
+
 setup_logging()
 _log = logging.getLogger(__name__)
 
@@ -16,23 +17,16 @@ class ActuationManager:
     def __init__(self,
                  active_onstart: bool = True,
                  control_interval: float = 60,
-                 #outputs: Dict[dict] = None,  # TODO: How is this handled in parent?
+                 # outputs: Dict[dict] = None,  # TODO: How is this handled in parent?
                  parent: LocalAsset = None,
-                 occupancy_manager: dict = None,
+                 occupancy_manager: OccupancyManager = None,
                  transactive_node: TransactiveNode = None):
         self.active_onstart = active_onstart
         self.control_interval = control_interval
-        #self.outputs = outputs if outputs else []
+        # self.outputs = outputs if outputs else []
         self.parent = parent if parent else LocalAsset()
+        self.occupancy_manager = None if occupancy_manager is None else weakref.ref(occupancy_manager)
         self.tn = None if transactive_node is None else weakref.ref(transactive_node)
-
-        # Initialize Scheduler
-        if occupancy_manager:
-            om_class = occupancy_manager.pop('class_name', 'OccupancyManager')
-            om_module = occupancy_manager.pop('module_name', 'transactive_node.local_asset.occupancy_manager')
-            module = importlib.import_module(om_module)
-            cls = getattr(module, om_class)
-            self.occupancy_manager = cls(**occupancy_manager)
 
         self.actuation_active = False
         self.actuation_allowed = True if self.active_onstart else False
@@ -50,12 +44,17 @@ class ActuationManager:
     def actuate(self, mkt):
         start_time = mkt.marketClearingTime + mkt.deliveryLeadTime
         end_time = start_time + mkt.intervalDuration
-        if (self.occupancy_manager.check_schedule(start_time)
-                and self.occupancy_manager.check_schedule(end_time)
-                and self.actuation_allowed):
+        ocm = self.occupancy_manager() if self.occupancy_manager else self.occupancy_manager
+        if ocm and ocm.check_schedule(start_time) and ocm.check_schedule(end_time) and self.actuation_allowed:
             self.actuation_active = True
         else:
+            if self.actuation_active:
+                self.release(mkt)
             self.actuation_active = False
+
+    def release(self, mkt):
+        # Override to implement release behavior
+        pass
 
     # TODO: VOLTTRON Specific, and possibly unneeded?
     # def enable_callback(self, peer, sender, bus, topic, headers, message):
