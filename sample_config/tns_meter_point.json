@@ -1,0 +1,15 @@
+{
+  "class_name": "TNSMeterPoint",
+  "module_name": "tns_meter_point",
+  "data_period_seconds": 10,
+  "description": "MeterName Meter",
+  "external_platform": false,
+  "max_buffer_seconds": 3600,
+  "measurement_interval": 3600,
+  "measurement_type": "Unknown",
+  "measurement_unit": "Unknown",
+  "name": "",
+  "point_name": "",
+  "scale_factor": 1.0,
+  "topic": ""
+}

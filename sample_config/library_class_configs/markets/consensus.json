@@ -1,0 +1,22 @@
+{
+  "class_name": "ConsensusMarket",
+  "module_name": "consensus_market",
+  "activation_lead_time": 0,
+  "commitment": false,
+  "default_price": 0.05,
+  "delivery_anchor_time": null,
+  "delivery_lead_time": 0,
+  "duality_gap_threshold": 0.01,
+  "future_horizon": 86400,
+  "initial_market_state": "Inactive",
+  "interval_duration": 3600,
+  "intervals_to_clear": 1,
+  "market_clearing_interval": 3600,
+  "market_lead_time": 0,
+  "market_order": 1,
+  "market_series_name": "Consensus_Market_Series",
+  "market_to_be_refined": null,
+  "negotiation_lead_time": 0,
+  "prior_market_in_series": null,
+  "real_time_duration": 900
+}

@@ -1,0 +1,8 @@
+{
+  "class_name": "OpenLoopLoadPredictor",
+  "module_name": "openloop_load_predictor",
+  "dow_intercept": [],
+  "season": [],
+  "values": [],
+  "scale_factor": 1
+}

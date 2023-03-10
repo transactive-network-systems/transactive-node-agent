@@ -1,0 +1,15 @@
+{
+  "db_topic": "TNS",
+  "description": "ActorName Transactive Node",
+  "name": "ActorName",
+  "simulation": false,
+  "simulation_one_hour_in_seconds": 3600,
+  "simulation_start_time": "2022-02-06T10:00:00",
+  "subscribe_all_platforms": true,
+  "tz": "UTC",
+  "meterPoints": [],
+  "informationServiceModels": [],
+  "localAssets": [],
+  "markets": [],
+  "neighbors": []
+}

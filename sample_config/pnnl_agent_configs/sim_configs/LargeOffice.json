@@ -1,0 +1,123 @@
+{
+  "db_topic": "tnc",
+  "description": "",
+  "name": "LargeOffice",
+  "simulation": true,
+  "simulation_one_hour_in_seconds": 600,
+  "simulation_start_time": "2017-07-31 00:00:00",
+  "subscribe_all_platforms": true,
+  "tz": "UTC",
+  "meterPoints": [
+    {
+      "class_name": "TNSMeterPoint",
+      "module_name": "transactive_node.tns_meter_point",
+      "data_period_seconds": 10,
+      "description": "",
+      "external_platform": false,
+      "max_buffer_seconds": 3600,
+      "measurement_interval": 3600,
+      "measurement_type": "AverageDemandkW",
+      "measurement_unit": "kWh",
+      "name": "PNNL_Campus ElectricMeter",
+      "point_name": "WholeBuildingPower",
+      "scale_factor": 1.0,
+      "topic": "devices/PNNL/LargeOffice/METERS/all"
+    }
+  ],
+  "informationServiceModels": [
+    {
+      "class_name": "DarkSkyTemperatureForecastModel",
+      "module_name": "transactive_node.dark_sky_temperature_forecast_model",
+      "name": "TemperatureForecast",
+      "location": "",
+      "temperature_point_name": "",
+      "tmy_fallback_path": "",
+      "weather_file_path": "/home/volttron/volttron/transactive_configurations/simulation/weather_data/energyplus.csv",
+      #"remote": {
+      #  "address": "",
+      #  "server_key": ""
+      #},
+      "remote_platform": "",
+      "weather_vip": ""
+    }
+  ],
+  "localAssets": [
+    {
+      "class_name": "TCCModel",
+      "module_name": "transactive_node.tcc_model",
+      "cost_parameters": [0.0, 0.0, 0.0],
+      "default_power": -2500.0,
+      "default_vertices": [[0.055, 0.0, 2500.0, true], [0.06, 0.0, 1250.0, true]],
+      "description": "",
+      "engagement_cost": [0.0, 0.0, 0.0],
+      "information_services": null,
+      "location": "",
+      "maximum_power": 0.0,
+      "minimum_power": -5000.0,
+      "meter_points": null,
+      "name": "TccModel",
+      "schedule_calculated": false,
+      "scheduling_horizon": 86400,
+      "subclass": null,
+      "base_tcc_market_name": "electric",
+      "building_market_default_price": 0.0428,
+      "max_deliver_capacity": 5000.0,
+      "mix_market_duration": 1200,
+      "real_time_market_name": "refinement_electric",
+      "tcc_interval_count": 24
+    }
+  ],
+  "markets": [
+    {
+      "class_name": "TNSDayAheadAuction",
+      "module_name": "transactive_node.tns_day_ahead_auction",
+      "activation_lead_time": 0,
+      "commitment": true,
+      "default_price": 0.0428,
+      "delivery_anchor_time": "02:00",
+      "delivery_lead_time": 3600,
+      "duality_gap_threshold": 0.1,
+      "future_horizon": 86400,
+      "initial_market_state": "Inactive",
+      "interval_duration": 3600,
+      "intervals_to_clear": 24,
+      "market_clearing_interval": 86400,
+      "market_lead_time": 900,
+      "market_order": 1,
+      "market_series_name": "Day-Ahead_Auction",
+      "market_to_be_refined": null,
+      "method": "Interpolation",
+      "negotiation_lead_time": 480,
+      "prior_market_in_series": null,
+      "real_time_duration": 900
+    }
+  ],
+  "neighbors": [
+    {
+      "class_name": "TNSNeighbor",
+      "module_name": "transactive_node.tns_neighbor",
+      "convergence_threshold": 0.05,
+      "cost_parameters": null,
+      "default_vertices": [[0.045, 25.0, 0.0, true], [0.048, 0.0, 5000.0, true]],
+      "demand_month": 1,
+      "demand_rate": 0.0,
+      "demand_threshold": 1600.0,
+      "demand_threshold_coef": 1.0,
+      "description": "PNNL_Campus",
+      "effective_impedance": 0.0,
+      "friend": false,
+      "location": "LargeOffice",
+      "loss_factor": 0.04,
+      "maximum_power": 5000.0,
+      "mechanism": "consensus",
+      "meter_points": ["PNNL_Campus ElectricMeter"],
+      "minimum_power": 0.0,
+      "name": "PNNL_Campus",
+      "subclass": null,
+      "transactive": true,
+      "up_or_down": "upstream",
+      "subscription_topic_postfix": "supply",
+      "publication_topic_postfix": "demand"
+    }
+  ]
+}

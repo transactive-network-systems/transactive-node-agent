@@ -1,0 +1,18 @@
+{
+  "class_name": "LocalAsset",
+  "module_name": "local_asset_model",
+  "cost_parameters": [0.0, 0.0, 0.0],
+  "default_power": 0.0, 
+  "default_vertices": null, 
+  "description": "", 
+  "engagement_cost": [0.0, 0.0, 0.0],
+  "information_services": null, 
+  "location": "", 
+  "maximum_power": 0.0, 
+  "minimum_power": 0.0, 
+  "meter_points": null, 
+  "name": "",
+  "schedule_calculated": false, 
+  "scheduling_horizon": 86400,
+  "subclass": null
+}
