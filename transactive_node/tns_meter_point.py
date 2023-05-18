@@ -20,8 +20,8 @@ class TNSMeterPoint(PushMeterPoint):
     # Implements method from PushMeterPoint.
     def set_up_subscription(self):
         if self.topic and self.tn and self.tn():
-            all_platforms = {'all_platforms': True} if self.external_platform else {}
-            self.tn().vip.pubsub.subscribe('pubsub', self.topic, self.on_topic, **all_platforms)
+            self.tn().vip.pubsub.subscribe(peer='pubsub', prefix=self.topic, callback=self.on_topic,
+                                           all_platforms=self.external_platform)
 
     def on_topic(self, peer, sender, bus, topic, headers, message):
         if self.tn and self.tn() and not self.tn().simulation:
