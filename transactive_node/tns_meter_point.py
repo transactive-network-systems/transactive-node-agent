@@ -36,7 +36,7 @@ class TNSMeterPoint(PushMeterPoint):
             _log.warning('Received bad message from {} on topic {}, bus {} from peer {}. Message: {} Headers: {}'
                          .format(sender, topic, bus, peer, message, headers))
 
-    def store(self):
+    def store(self, *args, **kwargs):
         _log.warning('MeterPoint.store() is not implemented for VOLTTRON. Use historian.')
 
     @classmethod
@@ -45,4 +45,4 @@ class TNSMeterPoint(PushMeterPoint):
 
     @classmethod
     def get_meter_by_hook(cls, meter_list, hook):
-        return PushMeterPoint.get_meters_by_hook(meter_list, hook)[0]
+        return TNSMeterPoint.get_meters_by_hook(meter_list, hook)[0]
