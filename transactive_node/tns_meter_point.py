@@ -20,8 +20,8 @@ class TNSMeterPoint(PushMeterPoint):
     # Implements method from PushMeterPoint.
     def set_up_subscription(self):
         if self.topic and self.tn and self.tn():
-            all_platforms = {'all_platforms': True} if self.external_platform else {}
-            self.tn().vip.pubsub.subscribe('pubsub', self.topic, self.on_topic, **all_platforms)
+            self.tn().vip.pubsub.subscribe(peer='pubsub', prefix=self.topic, callback=self.on_topic,
+                                           all_platforms=self.external_platform)
 
     def on_topic(self, peer, sender, bus, topic, headers, message):
         if self.tn and self.tn() and not self.tn().simulation:
@@ -36,7 +36,7 @@ class TNSMeterPoint(PushMeterPoint):
             _log.warning('Received bad message from {} on topic {}, bus {} from peer {}. Message: {} Headers: {}'
                          .format(sender, topic, bus, peer, message, headers))
 
-    def store(self):
+    def store(self, *args, **kwargs):
         _log.warning('MeterPoint.store() is not implemented for VOLTTRON. Use historian.')
 
     @classmethod
@@ -45,4 +45,4 @@ class TNSMeterPoint(PushMeterPoint):
 
     @classmethod
     def get_meter_by_hook(cls, meter_list, hook):
-        return PushMeterPoint.get_meters_by_hook(meter_list, hook)[0]
+        return TNSMeterPoint.get_meters_by_hook(meter_list, hook)[0]
