@@ -8,17 +8,18 @@ class DirectRatioActuationManager(ActuationManager):
     def actuate(self, mkt):
         super(DirectRatioActuationManager, self).actuate(mkt)
         if self.actuation_active:
-            start_time = mkt.marketClearingTime + mkt.deliveryLeadTime
-            price = [p.value for p in mkt.marginalPrices if p.timeInterval.startTime == start_time][0]
-            vertex_prices = [av.value.marginalPrice for av in self.parent.activeVertices
-                             if av.timeInterval.startTime == start_time]
+            # TODO: Is price assignment just trying to find the first price in delivery?
+            #  If so, there is now a Measurement.first method. If not, this needs to be reworked.
+            price = [v.value for ti, v in mkt.marginal_prices.all if ti.start_time == mkt.transition_times.delivery][0]
+            vertex_prices = [av.value.price for av in self.parent.active_vertices
+                             if av.interval.start_time == mkt.transition_times.delivery]
             min_price = min(vertex_prices)
             max_price = max(vertex_prices)
             price = min(max(price, min_price), max_price)  # clamp price within bid range.
             cleared_price_ratio = (price - min_price) / (max_price - min_price)
             for model in self.parent.models.values():  # TODO: Generalize this away from models in ModelFrameAsset.
                 if model.actuation_topic:
-                    min_set_point, max_set_point = model.set_point_range(start_time)
+                    min_set_point, max_set_point = model.set_point_range(mkt.transition_times.delivery)
                     # For forward-acting (cooling) mode:
                     new_set_point = (cleared_price_ratio * (max_set_point - min_set_point)) + min_set_point
                     # TODO: For heating mode instead do commented code: Also add context property in thermostat

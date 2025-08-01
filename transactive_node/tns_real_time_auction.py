@@ -3,7 +3,6 @@ import logging
 from collections import defaultdict
 
 from tent.market.real_time_auction import RealTimeAuction
-from tent.utils.helpers import format_timestamp
 from tent.utils.log import setup_logging
 from tent.utils.timer import Timer
 
@@ -21,15 +20,15 @@ class TNSRealTimeAuction(RealTimeAuction, TNSAuction):
 
     def transition_from_delivery_lead_to_delivery(self, my_transactive_node):
         RealTimeAuction.transition_from_delivery_lead_to_delivery(self, my_transactive_node)
-        headers = {headers_mod.DATE: format_timestamp(Timer.get_cur_time())}
+        headers = {headers_mod.DATE: Timer.now().isoformat()}
         scheduled_powers = defaultdict(dict)
-        for entity in my_transactive_node.neighbors + my_transactive_node.localAssets:
-            for p in entity.scheduledPowers:
-                if p.timeInterval.market is self:
-                    scheduled_powers[format_timestamp(p.timeInterval.startTime)][entity.name] = p.value
+        for entity in my_transactive_node.neighbors + my_transactive_node.local_assets:
+            for p in entity.scheduled_powers:
+                if p.interval.market is self:
+                    scheduled_powers[p.interval.start_time.isoformat()][entity.name] = p.value
         msg = {
             'tnt_market_name': self.name,
-            'balanced_prices': {format_timestamp(p.timeInterval.startTime): p.value for p in self.marginalPrices},
+            'balanced_prices': {p.interval.start_time.isoformat(): p.value for p in self.marginal_prices},
             'schedule_powers': scheduled_powers
         }
         my_transactive_node.vip.pubsub.publish(peer='pubsub',
@@ -39,15 +38,15 @@ class TNSRealTimeAuction(RealTimeAuction, TNSAuction):
         self.publish_records(my_transactive_node)
 
     def publish_records(self, my_transactive_node, upstream_agents=None, downstream_agents=None):
-        headers = {headers_mod.DATE: format_timestamp(Timer.get_cur_time())}
+        headers = {headers_mod.DATE: Timer.now().isoformat()}
         transactive_operation = dict()
         transactive_operation['prices'] = list()
         transactive_operation['demand'] = dict()
         transactive_operation['demand']['bid'] = dict()
 
         #        _log.debug("AUCTION: BEFORE: info: {}".format(transactive_operation))
-        for idx, p in enumerate(self.marginalPrices):
-            transactive_operation['prices'].append((format_timestamp(p.timeInterval.startTime), p.value))
+        for idx, p in enumerate(self.marginal_prices):
+            transactive_operation['prices'].append((p.interval.start_time.isoformat(), p.value))
 
         for neighbor in my_transactive_node.neighbors:
             transactive_operation['demand']['bid'][neighbor.name] = neighbor.get_dict()['sent_signal']
@@ -59,10 +58,21 @@ class TNSRealTimeAuction(RealTimeAuction, TNSAuction):
         for neighbor in my_transactive_node.neighbors:
             transactive_operation['demand']['actual']['neighbor'][neighbor.name] = \
                 neighbor.get_dict()['received_signal']
-        for asset in my_transactive_node.localAssets:
+        for asset in my_transactive_node.local_assets:
             transactive_operation['demand']['actual']['assets'][asset.name] = asset.get_dict()['vertices']
 
-        topic = "{}/{}".format(my_transactive_node.transactive_operation_topic, self.marketSeriesName)
+        #     def get_dict(self): # From LocalAsset
+        #         scheduled_powers = [(k.start_time.isoformat(), v.value) for k, v in self.scheduled_powers.all]
+        #         vertices = [(x.interval.start_time.isoformat(), x.value.price, x.value.quantity) for x in
+        #                     self.active_vertices]
+        #         local_asset_dict = {
+        #             "name": self.name,
+        #             "scheduled_power": scheduled_powers,
+        #             "vertices": vertices
+        #         }
+        #         return local_asset_dict
+
+        topic = "{}/{}".format(my_transactive_node.transactive_operation_topic, self.series.name)
         my_transactive_node.vip.pubsub.publish(peer='pubsub', topic=topic,
                                                headers=headers, message=transactive_operation)
 #        _log.debug("AUCTION: Publishing on market topic: {} and info: {}".format(topic, transactive_operation))

@@ -1,6 +1,6 @@
 import logging
 
-from volttron.platform.agent import utils
+from datetime import datetime
 
 from tent.meter_point.push_meter_point import PushMeterPoint
 from tent.utils.helpers import setup_logging, validate_bool
@@ -26,7 +26,7 @@ class TNSMeterPoint(PushMeterPoint):
     def on_topic(self, peer, sender, bus, topic, headers, message):
         if self.tn and self.tn() and not self.tn().simulation:
             date_header = headers.get('Date')
-            d_time = utils.parse_timestamp_string(date_header) if date_header is not None else None
+            d_time = datetime.fromisoformat(date_header) if date_header is not None else None
         else:
             d_time = None
         datum = message[0].get(self.point_name)

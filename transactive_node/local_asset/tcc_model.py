@@ -9,7 +9,7 @@ from tent.enumerations.market_state import MarketState
 from tent.enumerations.measurement_type import MeasurementType
 from tent.local_asset import LocalAsset
 from tent.utils.timer import Timer
-from tent.utils.helpers import find_obj_by_ti, format_timestamp, production
+from tent.utils.helpers import production
 from tent.utils.log import setup_logging
 
 from volttron.platform.vip.agent.utils import build_agent
@@ -85,10 +85,10 @@ class TCCModel(LocalAsset):
 
         # Create TCC Market Agent
         self.tcc_agent: MarketAgent = build_agent(agent_class=MarketAgent)
-
-        self.tn().vip.pubsub.subscribe(peer='pubsub',
-                                       prefix=self.market_balanced_price_topic,
-                                       callback=self.send_cleared_price)
+        tn = self.tn()
+        tn.vip.pubsub.subscribe(peer='pubsub',
+                                prefix=tn.topics['balanced_price_record'],
+                                callback=self.send_cleared_price)
 
         # Join electric mix-markets
         for market in self.tcc_market_names:
@@ -121,7 +121,7 @@ class TCCModel(LocalAsset):
             self.tnt_real_time_market = mkt
 
         # Check if now is near the end of the hour, applicable only if not in simulation mode
-        now = Timer.get_cur_time()
+        now = Timer.now()
         near_end_of_hour = False
         if not tn.simulation:
             near_end_of_hour = self.near_end_of_hour(now)
@@ -147,22 +147,22 @@ class TCCModel(LocalAsset):
             _log.debug("Building start_realtime_mixmarket: price: {}".format(price[0].value))
             initial_price = self.tnt_real_time_market.marginalPrices
             _log.debug("Building start_realtime_mixmarket:"
-                       " initial startTime : {}".format(initial_price[0].timeInterval.startTime))
-            avg_price, std_dev = self.tnt_real_time_market.priceModel.get(initial_price[0].timeInterval.startTime)
+                       " initial startTime : {}".format(initial_price[0].interval.start_time))
+            avg_price, std_dev = self.tnt_real_time_market.priceModel.get(initial_price[0].interval.start_time)
             prices_tuple = [(avg_price, std_dev)]
 
             self.real_time_price = [price[0].value]
-            market_start_hour = price[0].timeInterval.startTime.hour
-            time_intervals = [price[0].timeInterval.startTime.strftime('%Y%m%dT%H%M%S')]
+            market_start_hour = price[0].interval.start_time.hour
+            time_intervals = [price[0].interval.start_time.strftime('%Y%m%dT%H%M%S')]
             # Signal to start mix market only if the previous market is done
             if not self.real_time_mix_market_running and not near_end_of_hour:
                 _log.debug("Building start_realtime_mixmarket: here2")
                 self.real_time_mix_market_running = True
                 # Update weather information
                 weather_service = None
-                if len(tn.informationServiceModels) > 0:
-                    weather_service = tn.informationServiceModels[0]
-                    if not weather_service.predictedValues:
+                if len(tn.information_service_models) > 0:
+                    weather_service = tn.information_service_models[0]
+                    if not weather_service.predicted_values:
                         weather_service.update_information(self.tnt_real_time_market)
                 _log.info("Market name: {} start_realtime_mixmarket Building At market START Market"
                           " marginal prices are: {}".format(mkt.name, self.real_time_price))
@@ -173,11 +173,11 @@ class TCCModel(LocalAsset):
                                           message={"prices": self.real_time_price,
                                                    "price_info": prices_tuple,
                                                    "market_intervals": time_intervals,
-                                                   "Date": format_timestamp(now),
+                                                   "Date": now.isoformat(),
                                                    "correction_market": True})
                 else:
                     temps = [x.value for x in weather_service.predictedValues
-                             if x.timeInterval.startTime.hour == market_start_hour]
+                             if x.interval.start_time.hour == market_start_hour]
                     # temps = temps[-24:]
                     _log.debug("temps are {}".format(temps))
                     # TODO: Should this use tcc_agent?
@@ -187,7 +187,7 @@ class TCCModel(LocalAsset):
                                                    "price_info": prices_tuple,
                                                    "market_intervals": time_intervals,
                                                    "temp": temps,
-                                                   "Date": format_timestamp(now),
+                                                   "Date": now.isoformat(),
                                                    "correction_market": True})
 
                 # TODO: Remove this! Testing only!
@@ -200,11 +200,11 @@ class TCCModel(LocalAsset):
                 supply_curve = PolyLine()
                 supply_curve.add(Point(quantity=19.467139937430645, price=9.875727030740128))
                 supply_curve.add(Point(quantity=19.467139937430645, price=7.999302698874049))
-                self.real_time_aggregate_callback(timestamp=Timer.get_cur_time(),
+                self.real_time_aggregate_callback(timestamp=Timer.now(),
                                                   market_name=self.real_time_market_name,
                                                   buyer_seller='buyer',
                                                   aggregate_demand=supply_curve)
-                self.real_time_price_callback(timestamp=Timer.get_cur_time(),
+                self.real_time_price_callback(timestamp=Timer.now(),
                                               market_name=self.real_time_market_name,
                                               buyer_seller='buyer',
                                               price=9.079124841003399,
@@ -251,7 +251,7 @@ class TCCModel(LocalAsset):
         market.signal_new_data = True
 
         # Check if now is near the end of the hour, applicable only if not in simulation mode
-        now = Timer.get_cur_time()
+        now = Timer.now()
         near_end_of_hour = False
         if not tn.simulation:
             near_end_of_hour = self.near_end_of_hour(now)
@@ -266,19 +266,19 @@ class TCCModel(LocalAsset):
                                                   near_end_of_hour
                                                   ))
         _log.debug("Building start_mixMarket for name: {}, marginal prices: {}".format(market.name,
-                                                                                       market.marginalPrices))
+                                                                                       market.marginal_prices))
         if not market.converged or resend_balanced_prices:
             self.day_ahead_mixmarket_running = True
             self.day_ahead_clear_price_sent[market.name] = False
             _log.info("Building start_mixMarket: here1, flag: {}".format(self.day_ahead_clear_price_sent[market.name]))
-            prices = market.marginalPrices
-            initial_prices = market.marginalPrices
+            prices = market.marginal_prices
+            initial_prices = market.marginal_prices
             prices_tuple = list()
             time_intervals = list()
             for x in range(len(initial_prices)):
-                avg_price, std_dev = market.priceModel.get(initial_prices[x].timeInterval.startTime)
+                avg_price, std_dev = market.price_model.get(initial_prices[x].interval.start_time)
                 prices_tuple.append((avg_price, std_dev))
-                time_intervals.append(initial_prices[x].timeInterval.startTime.strftime('%Y%m%dT%H%M%S'))
+                time_intervals.append(initial_prices[x].interval.start_time.strftime('%Y%m%dT%H%M%S'))
 
             for idx, p in enumerate(prices):
                 self._building_market_prices[idx] = p.value
@@ -290,8 +290,8 @@ class TCCModel(LocalAsset):
                 self.mix_market_running = True
                 # Update weather information
                 weather_service = None
-                if len(tn.informationServiceModels) > 0:
-                    weather_service = tn.informationServiceModels[0]
+                if len(tn.information_service_models) > 0:
+                    weather_service = tn.information_service_models[0]
                     weather_service.update_information(market)
                 _log.info("Market name: {} Building At market START Market marginal prices are: {}".format(mkt.name,
                                                                                                            self.prices))
@@ -302,7 +302,7 @@ class TCCModel(LocalAsset):
                                           message={"prices": self.prices,
                                                    "price_info": prices_tuple,
                                                    "market_intervals": time_intervals,
-                                                   "Date": format_timestamp(now),
+                                                   "Date": now.isoformat(),
                                                    "correction_market": False})
                 else:
                     temps = [x.value for x in weather_service.predictedValues]
@@ -315,7 +315,7 @@ class TCCModel(LocalAsset):
                                                    "price_info": prices_tuple,
                                                    "market_intervals": time_intervals,
                                                    "temp": temps,
-                                                   "Date": format_timestamp(now),
+                                                   "Date": now.isoformat(),
                                                    "correction_market": False})
                 # TODO: Remove this! Testing only!
                 self.reservation_callback(timestamp="2021-07-02 00:00:00",
@@ -328,11 +328,11 @@ class TCCModel(LocalAsset):
                     supply_curve = PolyLine()
                     supply_curve.add(Point(quantity=19.467139937430645, price=9.875727030740128))
                     supply_curve.add(Point(quantity=19.467139937430645, price=7.999302698874049))
-                    self.aggregate_callback(timestamp=Timer.get_cur_time(),
+                    self.aggregate_callback(timestamp=Timer.now(),
                                             market_name=f'electric_{i}',
                                             buyer_seller='buyer',
                                             aggregate_demand=supply_curve)
-                    self.price_callback(timestamp=Timer.get_cur_time(),
+                    self.price_callback(timestamp=Timer.now(),
                                         market_name=f'electric_{i}',
                                         buyer_seller='buyer',
                                         price=9.079124841003399,
@@ -347,7 +347,7 @@ class TCCModel(LocalAsset):
         return near_end_of_hour
 
     def send_cleared_price(self, peer, sender, bus, topic, headers, message):
-        _log.info("At {}, {} receives new cleared prices: {}".format(Timer.get_cur_time(),
+        _log.info("At {}, {} receives new cleared prices: {}".format(Timer.now(),
                                                                      self.name, message))
         tn = self.tn()
         tnt_market_name = message['tnt_market_name']
@@ -355,16 +355,16 @@ class TCCModel(LocalAsset):
         tmp_price = []
         time_intervals = list()
 
-        for p in market.marginalPrices:
+        for p in market.marginal_prices:
             tmp_price.append(p.value)
-            time_intervals.append(p.timeInterval.startTime.strftime('%Y%m%dT%H%M%S'))
+            time_intervals.append(p.interval.start_time.strftime('%Y%m%dT%H%M%S'))
 
-        now = Timer.get_cur_time()
+        now = Timer.now()
         prices_tuple = list()
         if market.name.startswith('Day-Ahead'):
-            for idx, p in enumerate(market.marginalPrices):
+            for idx, p in enumerate(market.marginal_prices):
                 self._building_market_prices[idx] = p.value
-                avg_price, std_dev = market.priceModel.get(p.timeInterval.startTime)
+                avg_price, std_dev = market.price_model.get(p.interval.start_time)
                 prices_tuple.append((avg_price, std_dev))
             self.prices = self._building_market_prices  # [p.value for p in prices]
             _log.info(f"Market for name: {market.name} CLEARED marginal prices are: {self.prices},"
@@ -377,16 +377,16 @@ class TCCModel(LocalAsset):
                                       message={"prices": self.prices,
                                                "price_info": prices_tuple,
                                                "market_intervals": time_intervals,
-                                               "Date": format_timestamp(now),
+                                               "Date": now.isoformat(),
                                                "correction_market": False})
                 self.day_ahead_clear_price_sent[market.name] = True
                 _log.info(f"Market for name: {market.name},"
                           f" published cleared price {self.day_ahead_clear_price_sent[market.name]}")
         elif market.name.startswith('Real-Time'):
-            price = market.marginalPrices
+            price = market.marginal_prices
             # Get real time price from Real time market
             self.real_time_price = [price[0].value]
-            avg_price, std_dev = market.priceModel.get(price[0].timeInterval.startTime)
+            avg_price, std_dev = market.price_model.get(price[0].interval.start_time)
             price_tuple = [(avg_price, std_dev)]
             _log.info(f"Market for name: {market.name} CLEARED marginal price are: {self.real_time_price},"
                       f" flag: {self.real_time_clear_price_sent[market.name]}")
@@ -397,7 +397,7 @@ class TCCModel(LocalAsset):
                                       message={"prices": self.real_time_price,
                                                "price_info": price_tuple,
                                                "market_intervals": time_intervals,
-                                               "Date": format_timestamp(now),
+                                               "Date": now.isoformat(),
                                                "correction_market": True})
 
                 self.real_time_clear_price_sent[market.name] = True
@@ -455,23 +455,23 @@ class TCCModel(LocalAsset):
             _log.debug("{}: at ts {} max of aggregate curve : {}".format(self.name,
                                                                          timestamp,
                                                                          aggregate_demand.points[- 1]))
-            _log.debug("At {}: Report aggregate Market: {} buyer Curve: {}".format(Timer.get_cur_time(),
+            _log.debug("At {}: Report aggregate Market: {} buyer Curve: {}".format(Timer.now(),
                                                                                    market_name,
                                                                                    aggregate_demand))
             idx = int(market_name.split('_')[-1])
             self.building_demand_curves[idx] = (aggregate_demand.points[0], aggregate_demand.points[-1])
             db_topic = "/".join([tn.db_topic, self.name, "AggregateDemand"])
             message = {
-                "Timestamp": format_timestamp(timestamp),
+                "Timestamp": timestamp.isoformat(),
                 "MarketName": market_name,
                 "Curve": aggregate_demand.points
             }
-            headers = {headers_mod.DATE: format_timestamp(Timer.get_cur_time())}
+            headers = {headers_mod.DATE: Timer.now().isoformat()}
             # TODO: Should this use tcc_agent?
             tn.vip.pubsub.publish("pubsub", db_topic, headers, message).get()
 
     def price_callback(self, timestamp, market_name, buyer_seller, price, quantity):
-        _log.debug("{}: cleared price ({}, {}) for {} as {} at {}".format(Timer.get_cur_time(),
+        _log.debug("{}: cleared price ({}, {}) for {} as {} at {}".format(Timer.now(),
                                                                           price,
                                                                           quantity,
                                                                           market_name,
@@ -499,7 +499,7 @@ class TCCModel(LocalAsset):
             quantity = 0
         self.quantities[idx] += quantity
 
-        _log.debug("At {}, Quantity is {} and quantities are: {}".format(Timer.get_cur_time(),
+        _log.debug("At {}, Quantity is {} and quantities are: {}".format(Timer.now(),
                                                                          quantity,
                                                                          self.quantities))
         if quantity is not None and quantity < 0:
@@ -530,15 +530,15 @@ class TCCModel(LocalAsset):
 
             curves_arr = [(c[0].tuppleize(), c[1].tuppleize()) if c is not None else None
                           for c in self.building_demand_curves]
-            _log.debug("Data at time {}:".format(Timer.get_cur_time()))
-            _log.debug("Market intervals: {}".format([x.name for x in tn.markets[0].timeIntervals]))
+            _log.debug("Data at time {}:".format(Timer.now()))
+            _log.debug("Market intervals: {}".format([x.name for x in tn.markets[0].time_intervals]))
             _log.debug("Quantities: {}".format(self.quantities))
             _log.debug("Prices: {}".format(self.prices))
             _log.debug("Curves: {}".format(curves_arr))
 
             db_topic = "/".join([tn.db_topic, self.name, "AggregateDemand"])
-            message = {"Timestamp": format_timestamp(timestamp), "Curves": self.building_demand_curves}
-            headers = {headers_mod.DATE: format_timestamp(Timer.get_cur_time())}
+            message = {"Timestamp": timestamp.isoformat(), "Curves": self.building_demand_curves}
+            headers = {headers_mod.DATE: Timer.now().isoformat()}
             # TODO: Should this use tcc_agent?
             tn.vip.pubsub.publish("pubsub", db_topic, headers, message).get()
 
@@ -547,13 +547,13 @@ class TCCModel(LocalAsset):
 
             db_topic = "/".join([tn.db_topic, self.name, "Price"])
             price_message = []
-            for i in range(len(tnt_mkt.timeIntervals)):
-                ts = tnt_mkt.timeIntervals[i].name
+            for i, time_interval in enumerate(tnt_mkt.time_intervals):
+                ts = time_interval.name
                 price = self.prices[i]
                 quantity = self.quantities[i]
-                price_message.append({'timeInterval': ts, 'price': price, 'quantity': quantity})
-            message = {"Timestamp": format_timestamp(timestamp), "Price": price_message}
-            headers = {headers_mod.DATE: format_timestamp(Timer.get_cur_time())}
+                price_message.append({'time_interval': ts, 'price': price, 'quantity': quantity})
+            message = {"Timestamp": timestamp.isoformat(), "Price": price_message}
+            headers = {headers_mod.DATE: Timer.now().isoformat()}
             # TODO: Should this use tcc_agent?
             tn.vip.pubsub.publish("pubsub", db_topic, headers, message).get()
 
@@ -584,7 +584,7 @@ class TCCModel(LocalAsset):
 
     def real_time_offer_callback(self, timestamp, market_name, buyer_seller):
         # Get price from marginal price of TNT market
-        price = self.tnt_real_time_market.marginalPrices
+        price = self.tnt_real_time_market.marginal_prices
         # Quantity
         min_quantity = 0
         max_quantity = 10000  # float("inf")
@@ -612,22 +612,22 @@ class TCCModel(LocalAsset):
             _log.debug("{}: at ts {} max of aggregate curve : {}".format(self.name,
                                                                          timestamp,
                                                                          aggregate_demand.points[- 1]))
-            _log.debug("At {}: Report aggregate Market: {} buyer Curve: {}".format(Timer.get_cur_time(),
+            _log.debug("At {}: Report aggregate Market: {} buyer Curve: {}".format(Timer.now(),
                                                                                    market_name,
                                                                                    aggregate_demand))
             self.real_time_building_demand_curve = [(aggregate_demand.points[0], aggregate_demand.points[-1])]
             db_topic = "/".join([tn.db_topic, self.name, "AggregateDemand"])
             message = {
-                "Timestamp": format_timestamp(timestamp),
+                "Timestamp": timestamp.isoformat(),
                 "MarketName": market_name,
                 "Curve": aggregate_demand.points
             }
-            headers = {headers_mod.DATE: format_timestamp(Timer.get_cur_time())}
+            headers = {headers_mod.DATE: Timer.now().isoformat()}
             # TODO: Should this use tcc_agent?
             tn.vip.pubsub.publish("pubsub", db_topic, headers, message).get()
 
     def real_time_price_callback(self, timestamp, market_name, buyer_seller, price, quantity):
-        _log.debug("{}: cleared price ({}, {}) for {} as {} at {}".format(Timer.get_cur_time(),
+        _log.debug("{}: cleared price ({}, {}) for {} as {} at {}".format(Timer.now(),
                                                                           price,
                                                                           quantity,
                                                                           market_name,
@@ -645,15 +645,15 @@ class TCCModel(LocalAsset):
 
         curves_arr = [(c[0].tuppleize(), c[1].tuppleize()) if c is not None else None
                       for c in self.real_time_building_demand_curve]
-        _log.debug("Real Time market Data at time {}:".format(Timer.get_cur_time()))
+        _log.debug("Real Time market Data at time {}:".format(Timer.now()))
         _log.debug("Real Time market Market intervals: {}".format(market.name))
         _log.debug("Real Time market Quantities: {}".format(self.real_time_quantity))
         _log.debug("Real Time market Prices: {}".format(self.real_time_price))
         _log.debug("Real Time market Curves: {}".format(curves_arr))
 
         db_topic = "/".join([tn.db_topic, self.name, "RealTimeDemand"])
-        message = {"Timestamp": format_timestamp(timestamp), "Curves": self.real_time_building_demand_curve}
-        headers = {headers_mod.DATE: format_timestamp(Timer.get_cur_time())}
+        message = {"Timestamp": timestamp.isoformat(), "Curves": self.real_time_building_demand_curve}
+        headers = {headers_mod.DATE: Timer.now().isoformat()}
         # TODO: Should this use tcc_agent?
         tn.vip.pubsub.publish("pubsub", db_topic, headers, message).get()
 
@@ -688,11 +688,11 @@ class TCCModel(LocalAsset):
     def schedule_power(self, mkt):
         _log.info("Market TCC tcc_model schedule_power()")
         if self.tcc_agent is not None and not self.mix_market_running:
-            _log.info("Market in {} state..Starting building level mix market ".format(mkt.marketState))
+            _log.info("Market in {} state..Starting building level mix market ".format(mkt.market_state))
             resend_balanced_prices = False
             # if mkt.marketState == MarketState.DeliveryLead:
             #     resend_balanced_prices = True
-            if mkt.marketSeriesName == "Day-Ahead_Auction":
+            if mkt.series.name == "Day-Ahead_Auction":
                 self.start_mixmarket(resend_balanced_prices, mkt)
             else:
                 self.start_real_time_mixmarket(resend_balanced_prices, mkt)
@@ -705,7 +705,6 @@ class TCCModel(LocalAsset):
         #            markets. Instead, let's calculate any new scheduled powers and eliminate only the scheduled powers
         #            that exist in expired markets.
         # self.scheduledPowers = []
-        time_intervals = mkt.timeIntervals
 
         if self.tcc_curves is not None:
             _log.debug("Market {} TCC tcc_curves is not None, calling update_vertices".format(mkt.name))
@@ -713,23 +712,22 @@ class TCCModel(LocalAsset):
             self.update_vertices(mkt)
             self.scheduleCalculated = True
 
-        for i in range(len(time_intervals)):
-            time_interval = time_intervals[i]
-            value = self.defaultPower
+        for time_interval in mkt.time_intervals:
+            value = self.default_power
             if self.tcc_curves is not None:
                 # Update power at this marginal_price
-                marginal_price = find_obj_by_ti(mkt.marginalPrices, time_interval)
+                marginal_price = mkt.marginal_prices.get_by_interval(time_interval)
                 marginal_price = marginal_price.value
                 value = production(self, marginal_price, time_interval)  # [avg. kW]
 
             iv = IntervalValue(self, time_interval, mkt, MeasurementType.ScheduledPower, value)
-            self.scheduledPowers.append(iv)
+            self.scheduled_powers.append(iv)
 
         # 200929DJH: This following line is needed to make sure the list of scheduled powers does not grow indefinitely.
         #            Scheduled powers are retained only if their markets have not expired.
-        self.scheduledPowers = [x for x in self.scheduledPowers if x.market.marketState != MarketState.Expired]
+        self.scheduledPowers = [x for x in self.scheduled_powers if x.market.market_state != MarketState.Expired]
 
-        sp = [(x.timeInterval.name, x.value) for x in self.scheduledPowers]
+        sp = [(x.interval.name, x.value) for x in self.scheduledPowers]
         _log.debug("Market TCC scheduledPowers are: {}, length: {}".format(sp, len(sp)))
 
         if self.scheduleCalculated:
@@ -739,19 +737,17 @@ class TCCModel(LocalAsset):
         if self.tcc_curves is None:
             super(TCCModel, self).update_vertices(mkt)
         else:
-            time_intervals = mkt.timeIntervals
-
             # # 191220DJH: The mixed-market timing seems to be pretty hard-coded. This will not work generally for
             # #            multiple network markets having differing interval durations, numbers of intervals, etc.
 
-            for i in range(len(time_intervals)):
+            for i, time_interval in enumerate(mkt.time_intervals):
                 if self.tcc_curves[i] is None:
                     continue
                 # 200925DJH: Clean up active vertices that are to be replaced. This should be fine in Version 3 because
                 #            time intervals are unique to their markets.
                 try:
-                    time_interval = time_intervals[i]
-                    self.activeVertices = [x for x in self.activeVertices if x.timeInterval != time_interval]
+                    time_interval = time_interval
+                    self.activeVertices = [x for x in self.activeVertices if x.interval != time_interval]
                     point1 = self.tcc_curves[i][0].tuppleize()
                     q1 = -point1[0]
                     p1 = point1[1]
@@ -761,7 +757,7 @@ class TCCModel(LocalAsset):
 
                     if q2 != q1:
                         v2 = Vertex(p2, 0, q2)
-                        iv2 = IntervalValue(self, time_intervals[i], mkt, MeasurementType.ActiveVertex, v2)
+                        iv2 = IntervalValue(self, time_interval, mkt, MeasurementType.ActiveVertex, v2)
                         self.activeVertices.append(iv2)
                         v1 = Vertex(p1, 0, q1)
                         iv1 = IntervalValue(self, time_interval, mkt, MeasurementType.ActiveVertex, v1)
@@ -775,7 +771,7 @@ class TCCModel(LocalAsset):
 
         # 200929DJH: This is a good place to make sure the list of active vertices is trimmed and does not grow
         #            indefinitely.
-        self.activeVertices = [x for x in self.activeVertices if x.market.marketState != MarketState.Expired]
+        self.activeVertices = [x for x in self.activeVertices if x.market.market_state != MarketState.Expired]
 
-        av = [(x.timeInterval.name, x.value.marginalPrice, x.value.power) for x in self.activeVertices]
+        av = [(x.interval.name, x.value.price, x.value.quantity) for x in self.activeVertices]
         _log.debug("TCC active vertices are: {}".format(av))

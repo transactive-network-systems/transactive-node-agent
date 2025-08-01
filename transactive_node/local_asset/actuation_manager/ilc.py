@@ -3,7 +3,6 @@ import logging
 from datetime import datetime
 from typing import Union
 
-from tent.utils.helpers import format_timestamp
 from tent.utils.log import setup_logging
 from tent.utils.timer import Timer
 
@@ -22,16 +21,16 @@ class ILCActuationManager(ExternalTargetActuationManager):
         target_id: str = f'{self.parent.name}_{start}'
         tn = self.tn()
         headers = {
-            'Timestamp': format_timestamp(Timer.now()),
-            'Datetime': format_timestamp(Timer.now())
+            'Timestamp': Timer.now().isoformat(),
+            'Datetime': Timer.now().isoformat()
         }
         target = [
             {
                 "value": {
                     "id": target_id,
                     "target": -target if target is not None else None,
-                    "start": format_timestamp(start),
-                    "end": format_timestamp(end)
+                    "start": start.isoformat(),
+                    "end": end.isoformat()
                 }
             },
             {

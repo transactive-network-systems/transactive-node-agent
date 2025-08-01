@@ -42,21 +42,16 @@ under Contract DE-AC05-76RL01830
 """
 
 import gevent
-import importlib
+import json
 import logging
-import pytz
-import re
 import sys
 
-from dateutil import parser
-from tzlocal import get_localzone
-
-from tent.enumerations.market_state import MarketState
-from tent.market import Market
 from tent.transactive_node import TransactiveNode
+from tent.utils.helpers import json_encoder
 from tent.utils.timer import Timer
 
 from volttron.platform.agent import utils
+from volttron.platform.messaging import headers as headers_mod
 from volttron.platform.vip.agent import Agent, Core
 
 utils.setup_logging()
@@ -84,168 +79,104 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
         # Default configuration.
         self.db_topic = 'TNS'
-        self.transactive_operation_topic = f"{self.db_topic}/{self.name}/transactive_operation"
-        self.transactive_record_topic = f'{self.db_topic}/{self.name}/transactive_record'
-        self.local_asset_topic = f"{self.db_topic}/{self.name}/local_assets"
-        self.market_balanced_price_topic = "{}/{}/market_balanced_prices".format(self.db_topic, self.name)
         self.subscribe_all_platforms = False
-        self.tz = get_localzone()  # TODO: The Timer does not use aware date-times. This should be fixed.
+        self.topics: dict = {}
         self.plots_active = False  # TODO: Do the plots actually belong in the agent code, if not where?
 
-        self.simulation = False
-        self.simulation_start_time = Timer.get_cur_time()
-        self.simulation_one_hour_in_seconds = 3600
-
-        # TODO: Add configuration in appropriate dependency class (probably ConsensusMarket):
-        #  self.reschedule_interval = timedelta(minutes=10, seconds=1)
-
         # Set up config store.
-        self.default_config = {
-            # TransactiveNode Configurations (from TransactiveNode super-class):
-            "description": self.description,
-            "mechanism": self.mechanism,
-            "name": self.name,
-            "status": self.status,
-
-            # Dependency Objects (from TransactiveNode super-class):
-            "meterPoints": self.meterPoints,
-            "informationServiceModels": self.informationServiceModels,
-            "localAssets": self.localAssets,
-            "markets": self.markets,
-            "neighbors": self.neighbors,
-
+        self.default_config.update({
             # Agent Configurations:
             "db_topic": self.db_topic,
-            "transactive_operation_topic": self.transactive_operation_topic,
-            "transactive_record_topic": self.transactive_record_topic,
             "subscribe_all_platforms": self.subscribe_all_platforms,
-            "tz": self.tz,
-            "plots_active": self.plots_active,
-            "simulation": self.simulation,
-
-            # TODO: Add configuration in appropriate dependency class (probably ConsensusMarket):
-            #  "reschedule_interval": self.reschedule_interval.total_seconds(),
-        }
-        if self.simulation:
-            self.default_config["simulation_start_time"] = utils.format_timestamp(self.simulation_start_time)
-            self.default_config["simulation_one_hour_in_seconds"] = self.simulation_one_hour_in_seconds
-        _log.debug('TN: before set_default')
+            "topics": self.topics,
+            "plots_active": self.plots_active
+        })
         self.vip.config.set_default("config", self.default_config)
-        _log.debug('TN: after set_default')
         self.vip.config.subscribe(self.configure_main, actions=["NEW", "UPDATE"], pattern="config")
-        _log.debug('TN: end of init')
+
+    def _update_node_configurations(self, configs):
+        updated_configs = super(TransactiveNodeAgent, self)._update_node_configurations(configs)
+
+        # Agent Configurations:
+        self.db_topic = updated_configs.get('db_topic', self.db_topic)
+        self.subscribe_all_platforms = bool(updated_configs.get('subscribe_all_platforms', self.subscribe_all_platforms))
+        self.topics:dict = {
+            'balanced_price_record': f"{self.db_topic}/{self.name}/market_balanced_prices",
+            'local_asset_record': f"{self.db_topic}/{self.name}/local_assets",
+            'negotiation_record': f"{self.db_topic}/{self.name}/negotiation_record",
+            'transactive_operation_record': f"{self.db_topic}/{self.name}/transactive_operation",
+            'transactive_record': f'{self.db_topic}/{self.name}/transactive_record'
+        }
+        # Set up transactive signaling topics:
+        for neighbor in configs.get('neighbors', []):
+            neighbor_name = neighbor.get('name')
+            if not neighbor_name:
+                _log.warning(f'No name found in neighbor configuration: {neighbor}')
+            self.topics[f'{neighbor_name}_incoming_transactive_signal'] = f'{self.db_topic}/{neighbor_name}/{self.name}'
+            self.topics[f'{neighbor_name}_outgoing_transactive_signal'] = f'{self.db_topic}/{self.name}/{neighbor_name}'
+        self.topics.update(updated_configs.get('topics', self.topics))
+        self.plots_active = bool(updated_configs.get('plots_active', self.plots_active))
+        return updated_configs
 
     def configure_main(self, config_name, action, contents):
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
         self.vip.pubsub.unsubscribe("pubsub", None, None)
-        config = self.default_config.copy()
-        config.update(contents)
-
-        # TransactiveNode Configurations:
-        self.description = config.get('description', self.description)
-        self.mechanism = config.get('mechanism', self.mechanism)
-        self.name = config.get('name', self.name)
-        self.status = config.get('status', self.status)
-
-        # Agent Configurations:
-        self.db_topic = config.get('db_topic', self.db_topic)
-        self.transactive_operation_topic = f"{self.db_topic}/{self.name}/transactive_operation"
-        self.transactive_record_topic = f'{self.db_topic}/{self.name}/transactive_record'
-        self.local_asset_topic = f"{self.db_topic}/{self.name}/local_assets"
-        self.market_balanced_price_topic = "{}/{}/market_balanced_prices".format(self.db_topic, self.name)
-        self.subscribe_all_platforms = bool(config.get('subscribe_all_platforms', self.subscribe_all_platforms))
-        self.tz = pytz.timezone(str(config.get('tz', self.tz)))
-        self.plots_active = bool(config.get('plots_active', self.plots_active))
-
-        # Simulation Configurations:
-        self.simulation = bool(config.get('simulation', self.simulation))
-        if self.simulation:
-            self.simulation_start_time = parser.parse(config.get('simulation_start_time', self.simulation_start_time))
-            self.simulation_one_hour_in_seconds = int(config.get('simulation_one_hour_in_seconds',
-                                                                 self.simulation_one_hour_in_seconds))
-        Timer.created_time = Timer.get_cur_time()
-        Timer.simulation = self.simulation
-        Timer.sim_start_time = self.simulation_start_time
-        Timer.sim_one_hr_in_sec = self.simulation_one_hour_in_seconds
-
-        # TODO: Move these into appropriate dependency class (probably ConsensusMarket):
-        #  reschedule_interval = float(config.get('reschedule_interval'))
-        #  self.reschedule_interval = timedelta(seconds=reschedule_interval) if reschedule_interval \
-        #   else self.reschedule_interval
-
-        # Configure TransactiveNode Component Classes
-        try:
-            self.meterPoints = self.configure_dependencies(config.get('meterPoints'), 'MeterPoints')
-            self.informationServiceModels = self.configure_dependencies(config.get('informationServiceModels'),
-                                                                        'InformationServiceModels')
-            self.localAssets = self.configure_dependencies(config.get('localAssets'), 'LocalAssets')
-            self.neighbors = self.configure_dependencies(config.get('neighbors'), 'Neighbors')
-            self.markets = self.configure_dependencies(config.get('markets'), 'Markets')
-        except ValueError as e:
-            _log.error("ERROR PROCESSING CONFIGURATION {}".format(e))
-            raise
-
-        # TODO: This could probably be pushed down to the market constructor, but other places that initialize markets
-        #  would need to be updated as well so it doesn't do all this twice.
-        for market in self.markets:
-            # market.marketState = MarketState.Delivery # TODO: Why is this setting the market to delivery at the start?
-
-            delivery_start_time = market.marketClearingTime + market.deliveryLeadTime
-            next_analysis_time = self.simulation_start_time if self.simulation else delivery_start_time
-            _log.debug("{} schedule to run at exp_time: {} analysis_time: {}".format(self.name,
-                                                                                     delivery_start_time,
-                                                                                     next_analysis_time))
-            for p in market.marginalPrices:
-                _log.debug(f"Market: {market.name} has initial marginal prices {p.value}"
-                           f" for interval: {p.timeInterval.startTime}")
+        self.configure_node(contents)
+        # # TODO: This could probably be pushed down to the market constructor, but other places that initialize markets
+        # #  would need to be updated as well so it doesn't do all this twice.
+        # for market in self.markets:
+        #     # market.marketState = MarketState.Delivery # TODO: Why is this setting the market to delivery at the start?
+        #
+        #     next_analysis_time = self.simulation_start_time if self.simulation else market.transition_times.delivery
+        #     _log.debug("{} schedule to run at exp_time: {} analysis_time: {}".format(self.name,
+        #                                                                              market.transition_times.delivery,
+        #                                                                              next_analysis_time))
+        #     for p in market.marginal_prices:
+        #         _log.debug(f"Market: {market.name} has initial marginal prices {p.value}"
+        #                    f" for interval: {p.interval.start_time}")
         self.core.spawn_later(5, self.state_machine_loop)
-
-    def configure_dependencies(self, configs, dependency_type):
-        """Configures each dependency in passed list of configurations.
-
-        Instantiates each dependency.
-        Requires each dependency have a configure() method which is passed a dictionary of configurations and
-        a reference to this agent.
-        It is up to the individual dependency to manage its own configuration.
-
-        Returns list of instantiated and configured dependencies"""
-        first_cap_re = re.compile('(.)([A-Z][a-z]+)')
-        all_cap_re = re.compile('([a-z0-9])([A-Z])')
-
-        def camel_to_snake(name):
-            s1 = first_cap_re.sub(r'\1_\2', name)
-            return all_cap_re.sub(r'\1_\2', s1).lower()
-
-        dependencies = []
-        if not configs:
-            return dependencies
-        for config in configs:
-            cls = config.pop('class_name')
-            # TODO: What will be the default directory for classes in the TransactiveNodeAgent module?
-            default_module_name = 'tns.' + camel_to_snake(cls)
-            module = config.pop('module_name', default_module_name)
-            _log.debug(f'module_name is: {module}')
-            module = importlib.import_module(module)
-            config['transactive_node'] = self
-            dependency_class = getattr(module, cls)
-            if issubclass(dependency_class, Market):
-                config['first_market_in_series'] = True
-            dependency = dependency_class(**config)
-            dependencies.append(dependency)
-        dep_names = [d.name for d in dependencies]
-        if len(dep_names) != len(set(dep_names)):
-            raise ValueError(f'Configured {dependency_type} have duplicate names: {[d.name for d in dependencies]}')
-        return dependencies
 
     def state_machine_loop(self):
         while not self._stop_agent:
-            for market in self.markets:
-                market.events(self)
-                gevent.sleep(0.01)
+            for series in self.market_series:
+                for market in series:
+                    market.events()
+                    gevent.sleep(0.01)
 
     @Core.receiver('onstop')
     def onstop(self, sender, **kwargs):
         self._stop_agent = True
+
+    def publish(self, publish_key, message, date_time=None):
+        date_time = date_time if date_time else Timer.now()
+        headers = {headers_mod.DATE: date_time.isoformat()}
+        msg = json.loads(json.dumps(message, default=json_encoder))
+        publish_topic = self.topics.get(publish_key)
+        _log.debug(f"IN TNS PUBLISH, OUTGOING TOPIC FOR PUBLISH_KEY: {publish_key} IS: {publish_topic}")
+        if publish_topic:
+            if publish_topic == 'IGNORE':
+                return
+            self.vip.pubsub.publish(peer='pubsub', topic=publish_topic, headers=headers, message=msg)
+        else:
+            _log.warning(f'Attempted to publish to unknown publish_key: {publish_key}')
+
+    def register_subscription(self, subscribe_key, callback):
+        def wrapper(_, __, ___, topic, ____, message):
+            _log.debug(f'At {Timer.now()}, {self.name}  received new message on topic: {topic}')
+            return callback(message)
+
+        subscription_topic = self.topics.get(subscribe_key)
+        if subscription_topic:
+            self.vip.pubsub.subscribe(peer='pubsub',
+                                    prefix=subscription_topic,
+                                    callback=wrapper,
+                                    all_platforms=self.subscribe_all_platforms)
+        else:
+            _log.warning(f'No subscription topic registered for subscribe_key: {subscribe_key}')
+
+    def issue_signal(self, recipient, transactive_records):
+        # TODO: This method is unnecessary if signals can be generically placed in {'curves': ...} by neighbor.
+        self.publish(f'{recipient}_outgoing_transactive_signal', message={'curves': transactive_records})
 
 
 def main():

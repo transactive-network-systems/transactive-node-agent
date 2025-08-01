@@ -65,7 +65,7 @@ class DarkSkyTemperatureForecastModel(TemperatureForecastModel):
 
     def _parse_rpc_data(self, weather_results):
         try:
-            weather_data = [[parser.parse(oat[0]).astimezone(self.local_tz), oat[1][self.oat_point_name]] for oat in
+            weather_data = [[parser.parse(oat[0]).astimezone(self.tn.tz), oat[1][self.oat_point_name]] for oat in
                             weather_results]
             weather_data = [[oat[0].replace(tzinfo=None), oat[1]] for oat in weather_data]
             _log.debug("Parsed WEATHER information: {}".format(weather_data))

@@ -8,10 +8,10 @@ class ExternalTargetActuationManager(ActuationManager):
     def actuate(self, mkt):
         super(ExternalTargetActuationManager, self).actuate(mkt)
         if self.actuation_active:  # TODO: Add ability to determine future active schedule.
-            scheduled_powers_for_mkt = [sp for sp in self.parent.scheduledPowers if sp.market is mkt]
+            scheduled_powers_for_mkt = [sp for sp in self.parent.scheduled_powers if sp.market is mkt]
             for sp in scheduled_powers_for_mkt:
-                start_time = sp.timeInterval.startTime
-                end_time = start_time + sp.timeInterval.duration
+                start_time = sp.interval.start_time
+                end_time = start_time + sp.interval.duration
                 self.set_target(target=sp.value, start=start_time, end=end_time)
 
     def set_target(self, target, start, end):
@@ -19,10 +19,10 @@ class ExternalTargetActuationManager(ActuationManager):
 
     def release(self, mkt):
         super(ExternalTargetActuationManager, self).release(mkt)
-        scheduled_powers_for_mkt = [sp for sp in self.parent.scheduledPowers if sp.market is mkt]
+        scheduled_powers_for_mkt = [sp for sp in self.parent.scheduled_powers if sp.market is mkt]
         for sp in scheduled_powers_for_mkt:
-            start_time = sp.timeInterval.startTime
-            end_time = start_time + sp.timeInterval.duration
+            start_time = sp.interval.start_time
+            end_time = start_time + sp.interval.duration
             self.release_target(start=start_time, end=end_time)
 
     def release_target(self, start, end):
