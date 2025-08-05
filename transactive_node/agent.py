@@ -174,9 +174,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         else:
             _log.warning(f'No subscription topic registered for subscribe_key: {subscribe_key}')
 
-    def issue_signal(self, recipient, transactive_records):
-        # TODO: This method is unnecessary if signals can be generically placed in {'curves': ...} by neighbor.
-        self.publish(f'{recipient}_outgoing_transactive_signal', message={'curves': transactive_records})
+    def issue_signal(self, recipient, serialized_signal):
+        self.publish(f'{recipient}_outgoing_transactive_signal', message=serialized_signal)
 
 
 def main():
