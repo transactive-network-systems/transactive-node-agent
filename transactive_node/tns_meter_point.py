@@ -11,7 +11,6 @@ _log = logging.getLogger(__name__)
 
 class TNSMeterPoint(PushMeterPoint):
     def __init__(self, topic, point_name, external_platform, hook=None, *args, **kwargs):
-        self.hook = str(hook)
         self.topic = str(topic)
         self.point_name = str(point_name)
         self.external_platform = validate_bool(external_platform, 'external_platform')
@@ -35,14 +34,3 @@ class TNSMeterPoint(PushMeterPoint):
         else:
             _log.warning('Received bad message from {} on topic {}, bus {} from peer {}. Message: {} Headers: {}'
                          .format(sender, topic, bus, peer, message, headers))
-
-    def store(self, *args, **kwargs):
-        _log.warning('MeterPoint.store() is not implemented for VOLTTRON. Use historian.')
-
-    @classmethod
-    def get_meters_by_hook(cls, meter_list, hook):
-        return [m for m in meter_list if m.hook == hook and isinstance(m, cls)]
-
-    @classmethod
-    def get_meter_by_hook(cls, meter_list, hook):
-        return TNSMeterPoint.get_meters_by_hook(meter_list, hook)[0]
