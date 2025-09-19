@@ -50,11 +50,19 @@ from tent.transactive_node import TransactiveNode
 from tent.utils.helpers import json_encoder
 from tent.utils.timer import Timer
 
-from volttron.platform.agent import utils
-from volttron.platform.messaging import headers as headers_mod
-from volttron.platform.vip.agent import Agent, Core
+from importlib.metadata import distribution, PackageNotFoundError
+try:
+    distribution('volttron-core')
+    from volttron.client.logs import setup_logging
+    from volttron.client.messaging import headers as headers_mod
+    from volttron.client.vip.agent import Agent, Core
+    from volttron.utils import vip_main
+except PackageNotFoundError:
+    from volttron.platform.agent.utils import setup_logging, vip_main
+    from volttron.platform.messaging import headers as headers_mod
+    from volttron.platform.vip.agent import Agent, Core
 
-utils.setup_logging()
+setup_logging()
 _log = logging.getLogger(__name__)
 __version__ = '0.1'
 
@@ -67,7 +75,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     The Transactive Node Agent handles configuration of the node and its services,
     provides access to messages on the VOLTTRON message bus, and runs the loop.
     """
-    def __init__(self, config_path=None, *args, **kwargs):
+    def __init__(self, _, *args, **kwargs):
         _log.debug('in init')
         Agent.__init__(self, *args, **kwargs)
         _log.debug('Agent initialized')
@@ -179,7 +187,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
 def main():
     try:
-        utils.vip_main(TransactiveNodeAgent)
+        vip_main(TransactiveNodeAgent)
     except Exception as e:
         _log.exception(f'unhandled exception: {e}')
 
