@@ -138,10 +138,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
     def state_machine_loop(self):
         while not self._stop_agent:
-            for series in self.market_series:
-                for market in series:
-                    market.events()
-                    gevent.sleep(0.01)
+            self._state_machine_iteration()
 
     @Core.receiver('onstop')
     def onstop(self, sender, **kwargs):
@@ -160,6 +157,9 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         else:
             _log.warning(f'Attempted to publish to unknown publish_key: {publish_key}')
 
+    def issue_signal(self, recipient: str, signal_dict: dict):
+        self.publish(f'{recipient}_outgoing_transactive_signal', message=serialized_signal)
+
     def register_subscription(self, subscribe_key, callback):
         def wrapper(_, __, ___, topic, ____, message):
             _log.debug(f'At {Timer.now()}, {self.name}  received new message on topic: {topic}')
@@ -174,9 +174,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         else:
             _log.warning(f'No subscription topic registered for subscribe_key: {subscribe_key}')
 
-    def issue_signal(self, recipient, serialized_signal):
-        self.publish(f'{recipient}_outgoing_transactive_signal', message=serialized_signal)
-
+    def _sleep(self):
+        gevent.sleep(self.loop_sleep_duration)
 
 def main():
     try:
