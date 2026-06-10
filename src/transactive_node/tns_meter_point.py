@@ -14,16 +14,10 @@ class TNSMeterPoint(PushMeterPoint):
         self.topic = str(topic)
         self.point_name = str(point_name)
         self.external_platform = validate_bool(external_platform, 'external_platform')
-        PushMeterPoint.__init__(self, *args, **kwargs)
+        super().__init__(subscribe_key=self.topic, callback=self.on_topic, *args, **kwargs)
 
-    # Implements method from PushMeterPoint.
-    def set_up_subscription(self):
-        if self.topic and self.tn and self.tn():
-            self.tn().vip.pubsub.subscribe(peer='pubsub', prefix=self.topic, callback=self.on_topic,
-                                           all_platforms=self.external_platform)
-
-    def on_topic(self, peer, sender, bus, topic, headers, message):
-        if self.tn and self.tn() and not self.tn().simulation:
+    def on_topic(self, headers, message):
+        if self.tn and not self.tn.simulation:
             date_header = headers.get('Date')
             d_time = datetime.fromisoformat(date_header) if date_header is not None else None
         else:
@@ -32,5 +26,4 @@ class TNSMeterPoint(PushMeterPoint):
         if datum:
             self.set_meter_value(datum, d_time)
         else:
-            _log.warning('Received bad message from {} on topic {}, bus {} from peer {}. Message: {} Headers: {}'
-                         .format(sender, topic, bus, peer, message, headers))
+            _log.warning(f'Received bad message. Unable to parse meter values: {message}')
