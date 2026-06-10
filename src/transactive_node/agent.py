@@ -46,6 +46,8 @@ import json
 import logging
 import sys
 
+from datetime import datetime
+
 from tent.transactive_node import TransactiveNode
 from tent.utils.helpers import json_encoder
 from tent.utils.timer import Timer
@@ -75,7 +77,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     The Transactive Node Agent handles configuration of the node and its services,
     provides access to messages on the VOLTTRON message bus, and runs the loop.
     """
-    def __init__(self, _, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         _log.debug('in init')
         Agent.__init__(self, *args, **kwargs)
         _log.debug('Agent initialized')
@@ -109,10 +111,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self.db_topic = updated_configs.get('db_topic', self.db_topic)
         self.subscribe_all_platforms = bool(updated_configs.get('subscribe_all_platforms', self.subscribe_all_platforms))
         self.topics:dict = {
-            'balanced_price_record': f"{self.db_topic}/{self.name}/market_balanced_prices",
             'local_asset_record': f"{self.db_topic}/{self.name}/local_assets",
             'negotiation_record': f"{self.db_topic}/{self.name}/negotiation_record",
-            'transactive_operation_record': f"{self.db_topic}/{self.name}/transactive_operation",
             'transactive_record': f'{self.db_topic}/{self.name}/transactive_record'
         }
         # Set up transactive signaling topics:
@@ -166,19 +166,32 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             _log.warning(f'Attempted to publish to unknown publish_key: {publish_key}')
 
     def issue_signal(self, recipient: str, signal_dict: dict):
-        self.publish(f'{recipient}_outgoing_transactive_signal', message=serialized_signal)
+        try:
+            serialized_message = json.loads(json.dumps(signal_dict))
+            self.publish(f'{recipient}_outgoing_transactive_signal', message=serialized_message)
+        except (TypeError, ValueError) as e:
+            _log.warning(f'Failed to serialize outgoing signal to {recipient}: {signal_dict} with error: {e}')
 
     def register_subscription(self, subscribe_key, callback):
-        def wrapper(_, __, ___, topic, ____, message):
+        # TODO: This really needs to be aware of the topic format that is being parsed, i.e., devices, weather, etc.
+        #  We could do separate wrappers for each, or have configurable transforms.
+        def wrapper(_, __, ___, topic, header, message):
             _log.debug(f'At {Timer.now()}, {self.name}  received new message on topic: {topic}')
-            return callback(message)
+            try:
+                date_time = datetime.fromisoformat(header[headers_mod.TIMESTAMP])
+                message = json.loads(message)
+                return callback({'datetime': date_time, 'data': {topic: message}})
+            except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
+                print(f'Unable to decode incoming subscription "{topic}": {e}')
+            except Exception as e:
+                print(f'An unexpected error occurred while receiving subscription "{topic}": {e}')
 
         subscription_topic = self.topics.get(subscribe_key)
         if subscription_topic:
             self.vip.pubsub.subscribe(peer='pubsub',
-                                    prefix=subscription_topic,
-                                    callback=wrapper,
-                                    all_platforms=self.subscribe_all_platforms)
+                                      prefix=subscription_topic,
+                                      callback=wrapper,
+                                      all_platforms=self.subscribe_all_platforms)
         else:
             _log.warning(f'No subscription topic registered for subscribe_key: {subscribe_key}')
 
