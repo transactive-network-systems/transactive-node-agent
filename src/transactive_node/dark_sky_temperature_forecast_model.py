@@ -12,22 +12,22 @@ setup_logging()
 _log = logging.getLogger(__name__)
 
 
-class DarkSkyTemperatureForecastModel(TemperatureForecastModel):
+class TNSTemperatureForecastModel(TemperatureForecastModel):
     def __init__(self,
                  remote: dict = None,
                  remote_platform: str = '',
                  weather_vip: str = '',
                  *args, **kwargs):
-        super(DarkSkyTemperatureForecastModel, self).__init__(*args, **kwargs)
+        super(TNSTemperatureForecastModel, self).__init__(*args, **kwargs)
 
         remote = dict(remote) if remote else {}
-        if remote and self.tn and self.tn():
-            self.connection = self.tn().vip.auth.connect_remote_platform(address=(remote.get("address")),
+        if remote and self.tn:
+            self.connection = self.tn.vip.auth.connect_remote_platform(address=(remote.get("address")),
                                                                          serverkey=(remote.get("server_key")))
-        self.weather_vip = str(weather_vip) if weather_vip else "platform.weather_service"
+        self.weather_vip = str(weather_vip) if weather_vip else "platform.weather"
         self.remote_platform = str(remote_platform)
         # there is no easy way to check if weather service is running on a remote platform
-        if not (self.tn and self.tn() and self.weather_vip in self.tn().vip.peerlist.list().get())\
+        if not (self.tn and self.weather_vip in self.tn.vip.peerlist.list().get())\
                 and self.remote_platform is None:
             _log.warning("Weather service is not running!")
 
