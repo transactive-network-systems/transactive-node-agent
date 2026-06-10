@@ -1,0 +1,47 @@
+[build-system]
+requires = ["poetry-core>=1.2.2"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+volttron-transactive-node = "transactive_node.agent:main"
+
+[tool.isort]
+profile = "black"
+
+[tool.poetry]
+name = "volttron-transactive-node"
+version = "0.1.0"
+description = ""
+authors = ["TENT Team <volttron@pnnl.gov>"]
+license = "Apache License 2.0"
+readme = "README.md"
+repository = "https://github.com/volttron/TransactiveNodeAgent"
+homepage = "https://github.com/volttron/TransactiveNodeAgent"
+keywords = []
+packages = [ { include = "transactive_node" }]  #, from = "src" },
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Other Audience",
+    "License :: OSI Approved :: Apache Software License"
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+volttron-core = ">=2.0.0rc0"
+
+[tool.yapf]
+based_on_style = "pep8"
+spaces_before_comment = 4
+column_limit = 99
+split_before_logical_operator = true
+
+[tool.yapfignore]
+ignore_patterns = [
+    ".venv/**",
+    ".pytest_cache/**",
+    "dist/**",
+    "docs/**"
+]
