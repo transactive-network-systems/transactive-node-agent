@@ -128,7 +128,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
     def configure_main(self, config_name, action, contents):
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
-        self.vip.pubsub.unsubscribe("pubsub", None, None)
+        #self.vip.pubsub.unsubscribe("pubsub", None, None)
         self.configure_node(contents)
         # # TODO: This could probably be pushed down to the market constructor, but other places that initialize markets
         # #  would need to be updated as well so it doesn't do all this twice.
