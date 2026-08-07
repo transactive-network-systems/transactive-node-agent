@@ -18,7 +18,7 @@ readme = "README.md"
 repository = "https://github.com/volttron/TransactiveNodeAgent"
 homepage = "https://github.com/volttron/TransactiveNodeAgent"
 keywords = []
-packages = [ { include = "transactive_node" }]  #, from = "src" },
+packages = [ { include = "transactive_node", from = "src" }]
 classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Intended Audience :: Science/Research",

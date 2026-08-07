@@ -157,7 +157,6 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         headers = {headers_mod.DATE: date_time.isoformat()}
         msg = json.loads(json.dumps(message, default=json_encoder))
         publish_topic = self.topics.get(publish_key)
-        _log.debug(f"IN TNS PUBLISH, OUTGOING TOPIC FOR PUBLISH_KEY: {publish_key} IS: {publish_topic}")
         if publish_topic:
             if publish_topic == 'IGNORE':
                 return
@@ -182,12 +181,13 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
                 message = json.loads(message)
                 return callback({'datetime': date_time, 'data': {topic: message}})
             except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
-                print(f'Unable to decode incoming subscription "{topic}": {e}')
+                _log.warning(f'Unable to decode incoming subscription "{topic}": {e}')
             except Exception as e:
-                print(f'An unexpected error occurred while receiving subscription "{topic}": {e}')
+                _log.warning(f'An unexpected error occurred while receiving subscription "{topic}": {e}')
 
         subscription_topic = self.topics.get(subscribe_key)
         if subscription_topic:
+            _log.info(f'Subscribing for key: {subscribe_key} to topic: {subscription_topic}')
             self.vip.pubsub.subscribe(peer='pubsub',
                                       prefix=subscription_topic,
                                       callback=wrapper,
