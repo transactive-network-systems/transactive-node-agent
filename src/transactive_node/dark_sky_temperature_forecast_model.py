@@ -4,11 +4,14 @@ import logging
 from dateutil import parser
 
 from tent.information_service_model.temperature_forecast_model import TemperatureForecastModel
-from tent.utils.log import setup_logging
 
-from volttron.platform.jsonrpc import RemoteError
+from importlib.metadata import distribution, PackageNotFoundError
+try:
+    distribution('volttron-core')
+    from volttron.utils.jsonrpc import RemoteError
+except PackageNotFoundError:
+    from volttron.platform.jsonrpc import RemoteError
 
-setup_logging()
 _log = logging.getLogger(__name__)
 
 

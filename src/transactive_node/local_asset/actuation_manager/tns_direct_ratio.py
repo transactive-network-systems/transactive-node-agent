@@ -3,10 +3,17 @@ import logging
 
 from tent.utils.log import setup_logging
 
-from transactive_node.local_asset.actuation_manager.direct_ratio import DirectRatioActuationManager
+from tent.local_asset.actuation_manager.direct_ratio import DirectRatioActuationManager
 
-from volttron.platform.jsonrpc import RemoteError
-from volttron.platform.vip.agent import errors
+
+from importlib.metadata import distribution, PackageNotFoundError
+try:
+    distribution('volttron-core')
+    from volttron.client.vip.agent import errors
+    from volttron.utils.jsonrpc import RemoteError
+except PackageNotFoundError:
+    from volttron.platform.jsonrpc import RemoteError
+    from volttron.platform.vip.agent import errors
 
 setup_logging()
 _log = logging.getLogger(__name__)

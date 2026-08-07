@@ -6,7 +6,7 @@ from typing import Union
 from tent.utils.log import setup_logging
 from tent.utils.timer import Timer
 
-from transactive_node.local_asset.actuation_manager.external_target import ExternalTargetActuationManager
+from tent.local_asset.actuation_manager.external_target import ExternalTargetActuationManager
 
 setup_logging()
 _log = logging.getLogger(__name__)

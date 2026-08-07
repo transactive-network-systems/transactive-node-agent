@@ -3,9 +3,8 @@ import logging
 from datetime import datetime
 
 from tent.meter_point.push_meter_point import PushMeterPoint
-from tent.utils.helpers import setup_logging, validate_bool
+from tent.utils.helpers import validate_bool
 
-setup_logging()
 _log = logging.getLogger(__name__)
 
 
