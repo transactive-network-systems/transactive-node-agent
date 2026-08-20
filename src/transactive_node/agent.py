@@ -86,6 +86,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
         # Initial State:
         self._stop_agent = False
+        self._state_machine_greenlet = None
 
         # Default configuration.
         self.db_topic = 'TNS'
@@ -142,15 +143,17 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         #     for p in market.marginal_prices:
         #         _log.debug(f"Market: {market.name} has initial marginal prices {p.value}"
         #                    f" for interval: {p.interval.start_time}")
-        self.core.spawn_later(5, self.state_machine_loop)
+        if self._state_machine_greenlet is None or self._state_machine_greenlet.dead:
+            self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
 
     def state_machine_loop(self):
         while not self._stop_agent:
             self._state_machine_iteration()
 
     @Core.receiver('onstop')
-    def onstop(self, sender, **kwargs):
+    def onstop(self, _, **__):
         self._stop_agent = True
+        self._state_machine_greenlet = None
 
     def publish(self, publish_key, message, date_time=None):
         date_time = date_time if date_time else Timer.now()
