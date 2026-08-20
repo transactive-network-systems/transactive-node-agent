@@ -40,9 +40,9 @@ class ILCActuationManager(ExternalTargetActuationManager):
             }
         ]
         try:
-            tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic,
-                                  headers=headers, message=target)
+            _log.info(f'Setting ILC target to {target} between {start.isoformat()} and {end.isoformat()}')
             self.tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic,
+                                       headers=headers, message=target_message)
         except Exception as e:
             _log.debug(f'Error publishing to target: {e}')
 
