@@ -130,6 +130,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     def configure_main(self, config_name, action, contents):
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
         #self.vip.pubsub.unsubscribe("pubsub", None, None)
+        self.topics = contents.get('topics', {})
         self.configure_node(contents)
         # # TODO: This could probably be pushed down to the market constructor, but other places that initialize markets
         # #  would need to be updated as well so it doesn't do all this twice.
@@ -157,7 +158,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
     def publish(self, publish_key, message, date_time=None):
         date_time = date_time if date_time else Timer.now()
-        headers = {headers_mod.DATE: date_time.isoformat()}
+        headers = {headers_mod.TIMESTAMP: date_time.isoformat()}
         msg = json.loads(json.dumps(message, default=json_encoder))
         publish_topic = self.topics.get(publish_key)
         if publish_topic:
@@ -177,12 +178,16 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     def register_subscription(self, subscribe_key, callback):
         # TODO: This really needs to be aware of the topic format that is being parsed, i.e., devices, weather, etc.
         #  We could do separate wrappers for each, or have configurable transforms.
-        def wrapper(_, __, ___, topic, header, message):
-            _log.debug(f'At {Timer.now()}, {self.name}  received new message on topic: {topic}')
+        def wrapper(_, __, ___, topic, headers, message):
             try:
-                date_time = datetime.fromisoformat(header[headers_mod.TIMESTAMP])
-                message = json.loads(message)
-                return callback({'datetime': date_time, 'data': {topic: message}})
+                time_received = datetime.fromisoformat(headers[headers_mod.TIMESTAMP])
+                if topic.startswith('devices/'):
+                    message = message[0]
+                elif topic.startswith('analysis/'):
+                    message = message[0]
+                else:  # TODO: Handle datalogger & any other topic types we might encounter.
+                    message = message
+                return callback(time_received, subscribe_key, message)
             except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
                 _log.warning(f'Unable to decode incoming subscription "{topic}": {e}')
             except Exception as e:
