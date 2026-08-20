@@ -32,7 +32,7 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
                 self.tn.vip.rpc.call(self.actuator_identity,
                                 'set_point',
                                 requester_id=self.parent.name,
-                                topic=target_id,
+                                topic=target_topic,
                                 value=new_set_point).get(timeout=15)
             except (RemoteError, gevent.Timeout, errors.VIPError) as ex:
                 _log.warning(f"Failed to set {target_id} - ex: {str(ex)}")

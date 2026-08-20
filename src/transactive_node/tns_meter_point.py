@@ -9,19 +9,20 @@ _log = logging.getLogger(__name__)
 
 
 class TNSMeterPoint(PushMeterPoint):
-    def __init__(self, topic, point_name, external_platform, hook=None, *args, **kwargs):
-        self.topic = str(topic)
+    def __init__(self, subscribe_key: str, point_name: str, external_platform: bool, *args, **kwargs):
+        # subscribe_key should be a string which is mapped to a topic in the TNS agent configuration "topics" dict.
         self.point_name = str(point_name)
         self.external_platform = validate_bool(external_platform, 'external_platform')
-        super().__init__(subscribe_key=self.topic, callback=self.on_topic, *args, **kwargs)
+        super().__init__(subscribe_key=subscribe_key, *args, **kwargs)
 
-    def on_topic(self, headers, message):
+    def handle_subscription(self, time_received: datetime, subscribe_key: str, message: dict):
+        if subscribe_key != self.subscribe_key:
+            _log.warning(f'Received unexpected subscribe_key "{subscribe_key}" in MeterPoint expecting "{self.subscribe_key}"')
         if self.tn and not self.tn.simulation:
-            date_header = headers.get('Date')
-            d_time = datetime.fromisoformat(date_header) if date_header is not None else None
+            d_time = time_received if time_received is not None else None
         else:
             d_time = None
-        datum = message[0].get(self.point_name)
+        datum = message.get(self.point_name)
         if datum:
             self.set_meter_value(datum, d_time)
         else:
