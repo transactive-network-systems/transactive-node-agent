@@ -25,10 +25,9 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
         self.actuator_identity = actuator_identity
 
     def direct_actuate(self, target_id, new_set_point):
-        if self.tn and self.tn():
-            tn = self.tn()
             try:
                 tn.vip.rpc.call(self.actuator_identity,
+                self.tn.vip.rpc.call(self.actuator_identity,
                                 'set_point',
                                 requester_id=self.parent.name,
                                 topic=target_id,
@@ -37,12 +36,10 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
                 _log.warning(f"Failed to set {target_id} - ex: {str(ex)}")
 
     def direct_release(self, target_id):
-        if self.tn and self.tn():
-            tn = self.tn()
             try:
-                tn.vip.rpc.call(self.actuator_identity,
                                 'revert_point',
                                 requester_id=self.parent.name,
                                 topic=target_id).get(timeout=15)
             except (RemoteError, gevent.Timeout, errors.VIPError) as ex:
                 _log.warning(f"Failed to revert {target_id} - ex: {str(ex)}")
+            self.tn.vip.rpc.call(self.actuator_identity,

@@ -19,7 +19,6 @@ class ILCActuationManager(ExternalTargetActuationManager):
 
     def set_target(self, target: Union[float, None], start: datetime, end: datetime):
         target_id: str = f'{self.parent.name}_{start}'
-        tn = self.tn()
         headers = {
             'Timestamp': Timer.now().isoformat(),
             'Datetime': Timer.now().isoformat()
@@ -43,6 +42,7 @@ class ILCActuationManager(ExternalTargetActuationManager):
         try:
             tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic,
                                   headers=headers, message=target)
+            self.tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic,
         except Exception as e:
             _log.debug(f'Error publishing to target: {e}')
 

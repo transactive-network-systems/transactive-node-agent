@@ -23,7 +23,6 @@ def check_schedule(self, dt):
         self.update_actuation_state(False)
 
 def update_actuation_state(self, new_state):
-    tn = self.tn()
     if self.actuation_active and not bool(new_state):
         # Deactivate actuation: kill periodic and release all values.
         if self.actuation_periodic is not None:
@@ -37,9 +36,9 @@ def update_actuation_state(self, new_state):
             topic = output_info["topic"]
             if output_info.get("release", None) is not None:
                 try:
-                    release_value = tn.vip.rpc.call(output_info.get("actuator", "platform.actuator"),
-                                                    'get_point',
-                                                    topic).get(timeout=10)
+                    release_value = self.tn.vip.rpc.call(output_info.get("actuator", "platform.actuator"),
+                                                         'get_point',
+                                                         topic).get(timeout=10)
                 except (RemoteError, gevent.Timeout, errors.VIPError) as ex:
                     _log.warning("Failed to get {} - ex: {}".format(topic, str(ex)))
                     release_value = None
@@ -47,8 +46,8 @@ def update_actuation_state(self, new_state):
                 release_value = None
             self.outputs[name]["release"] = release_value
         _log.debug("Setup periodic actuation: %s -- %s", self.parent.name, self.control_interval)
-        self.actuation_periodic = tn.core.periodic(self.control_interval, self.do_actuation,
-                                                   wait=self.control_interval)
+        self.actuation_periodic = self.tn.core.periodic(self.control_interval, self.do_actuation,
+                                                        wait=self.control_interval)
     self.actuation_active = new_state
 
 def do_actuation(self, price=None):
