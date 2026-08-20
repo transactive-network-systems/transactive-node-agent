@@ -23,7 +23,7 @@ class ILCActuationManager(ExternalTargetActuationManager):
             'Timestamp': Timer.now().isoformat(),
             'Datetime': Timer.now().isoformat()
         }
-        target = [
+        target_message = [
             {
                 "value": {
                     "id": target_id,
@@ -35,7 +35,7 @@ class ILCActuationManager(ExternalTargetActuationManager):
             {
                 "value": {
                     "units": "kW",
-                    "tz": str(tn.tz)
+                    "tz": str(self.tn.tz)
                 }
             }
         ]

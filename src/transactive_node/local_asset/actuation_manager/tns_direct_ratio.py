@@ -34,8 +34,8 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
                                 requester_id=self.parent.name,
                                 topic=target_topic,
                                 value=new_set_point).get(timeout=15)
-            except (RemoteError, gevent.Timeout, errors.VIPError) as ex:
-                _log.warning(f"Failed to set {target_id} - ex: {str(ex)}")
+        except (RemoteError, gevent.Timeout, errors.VIPError) as ex:
+            _log.warning(f"Failed to set {target_id} - ex: {str(ex)}")
 
     def direct_release(self, target_id):
         try:
