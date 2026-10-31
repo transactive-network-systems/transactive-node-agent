@@ -114,8 +114,6 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self.topics: dict = {
             # Archive records from the node's VolttronDataManager, captured by the transactive-node historian.
             'archive': f'{self.db_topic}/{self.name}/archive',
-            # Market.balanced_price_publish() publishes under this key; IGNORE drops it unless a topic is configured.
-            'balanced_price_record': 'IGNORE',
         }
         # Set up transactive signaling topics:
         for neighbor in configs.get('neighbors', []):
