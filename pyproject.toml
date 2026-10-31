@@ -29,8 +29,10 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 volttron-core = ">=2.0.0rc0"
+# tent (code/TENT in this project) is required and is installed into the platform with `vctl install-lib`
+# or `pip install -e ../TENT`; it is not on PyPI yet.
 
 [tool.yapf]
 based_on_style = "pep8"

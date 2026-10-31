@@ -111,10 +111,11 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         # Agent Configurations:
         self.db_topic = updated_configs.get('db_topic', self.db_topic)
         self.subscribe_all_platforms = bool(updated_configs.get('subscribe_all_platforms', self.subscribe_all_platforms))
-        self.topics:dict = {
-            'local_asset_record': f"{self.db_topic}/{self.name}/local_assets",
-            'negotiation_record': f"{self.db_topic}/{self.name}/negotiation_record",
-            'transactive_record': f'{self.db_topic}/{self.name}/transactive_record'
+        self.topics: dict = {
+            # Archive records from the node's VolttronDataManager, captured by the transactive-node historian.
+            'archive': f'{self.db_topic}/{self.name}/archive',
+            # Market.balanced_price_publish() publishes under this key; IGNORE drops it unless a topic is configured.
+            'balanced_price_record': 'IGNORE',
         }
         # Set up transactive signaling topics:
         for neighbor in configs.get('neighbors', []):
@@ -158,7 +159,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
     def publish(self, publish_key, message, date_time=None):
         date_time = date_time if date_time else Timer.now()
-        headers = {headers_mod.TIMESTAMP: date_time.isoformat()}
+        # DATE is what the base historian reads for record capture; TIMESTAMP is what TENT subscriptions read.
+        headers = {headers_mod.DATE: date_time.isoformat(), headers_mod.TIMESTAMP: date_time.isoformat()}
         msg = json.loads(json.dumps(message, default=json_encoder))
         publish_topic = self.topics.get(publish_key)
         if publish_topic:
