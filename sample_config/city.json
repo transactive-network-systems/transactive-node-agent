@@ -1,66 +1,35 @@
 {
-  "db_topic": "tnc",
+  "db_topic": "tns",
   "description": "",
-  "name": "",  # from config.
-  "simulation": false,
-  "simulation_one_hour_in_seconds": 3600,  # from config.
-  "simulation_start_time": "2022-02-06T10:00:00",  # from config.
+  "name": "CoR",
+  "simulation": true,
+  "simulation_one_hour_in_seconds": 100,
+  "simulation_start_time": "2017-07-03 00:00:00",
   "subscribe_all_platforms": true,
   "tz": "UTC",
-  "meterPoints": [
-    {
-      # This meter does not seem to be used after being instantiated!?
-      "class_name": "TNSMeterPoint",
-      "module_name": "tns_meter_point",
-      "data_period_seconds": 10,
-      "description": "",
-      "external_platform": false,
-      "max_buffer_seconds": 3600,
-      "measurement_interval": 3600,
-      "measurement_type": "PowerReal",
-      "measurement_unit": "kWh",
-      "name": "CoRElectricMeter",
-      "point_name": "",
-      "scale_factor": 1.0,
-      "topic": ""
-    },
-    {
-      "class_name": "TNSMeterPoint",
-      "module_name": "tns_meter_point",
-      "data_period_seconds": 10,
-      "description": "BPA electricity to COR",
-      "external_platform": false,
-      "max_buffer_seconds": 3600,
-      "measurement_interval": 3600,
-      "measurement_type": "PowerReal",
-      "measurement_unit": "kWh",
-      "name": "BpaElectricityMeter",
-      "point_name": "",
-      "scale_factor": 1.0,
-      "topic": ""
+  "data_manager": {
+    "class_name": "LocalDataManager",
+    "module_name": "tent.data_manager.local_data_manager",
+    "db_params": {
+      "db_type": "sqlite",
+      "url": "sqlite:///testent.sqlite"
     }
-  ],
-  "informationServiceModels": [
+  },
+  "information_service_models": [
     {
-      "class_name": "DarkSkyTemperatureForecastModel",
-      "module_name": "dark_sky_temperature_forecast_model",
+      "class_name": "TemperatureForecastModel",
+      "module_name": "tent.information_service_model.temperature_forecast_model",
       "name": "TemperatureForecast",
       "location": "",
       "temperature_point_name": "",
       "tmy_fallback_path": "",
-      "weather_file_path": null,
-      "remote": {
-        "address": "",
-        "server_key": ""
-      },
-      "remote_platform": "",
-      "weather_vip": ""
-    }  # all values used are from config.
+      "weather_file_path": "/home/volttron/configs/pasco_2017_dry_bulb_temperature.csv"
+    }
   ],
-  "localAssets": [
+  "local_assets": [
     {
       "class_name": "OpenLoopLoadPredictor",
-      "module_name": "open_loop_load_predictor",
+      "module_name": "tent.local_asset.openloop_load_predictor",
       "scale_factor": 1,
       "default_power": -100420,
       "description": "Correlation model of bulk inelastic city load",
@@ -68,29 +37,28 @@
       "maximum_power": -50000,
       "minimum_power": -200000,
       "name": "InelasticCityLoad",
-      "dowIntercept": [
-    144786,  # Monday
-    146281,  # Tuesday
-    146119,  # Wednesday
-    145577,  # Thursday
-    143896,  # Friday
-    139432,  # Saturday
-    138118   # Sunday
+      "dow_intercept": [
+    144786,
+    146281,
+    146119,
+    145577,
+    143896,
+    139432,
+    138118
   ],
-      # SEASON - Maps categorical SEASON to the lookup table as a function of MONTH.
       "season": [
-    6,  # January   Winter
-    6,  # February  Winter
-    1,  # March     Spring
-    1,  # April     Spring
-    1,  # May       Spring
-    3,  # June      Summer
-    3,  # July      Summer
-    3,  # August    Summer
-    4,  # September Fall
-    4,  # October   Fall
-    4,  # November  Fall
-    6   # December  Winter
+    6,
+    6,
+    1,
+    1,
+    1,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    6
   ],
       "values": [
     [-149652, 1245],
@@ -240,35 +208,65 @@
   ]
     }
   ],
-  "markets": [
-    {
-      "class_name": "DayAheadAuction",
-      "module_name": "day_ahead_auction",
-      "activation_lead_time": 0,
+    "market_series": [
+{
+      "class_name": "MarketSeries",
+      "module_name": "tent.market.market_series",
+      "market_class_name": "Auction",
+      "market_module_name": "tent.market.auction",
       "commitment": true,
       "default_price": 0.0428,
-      "delivery_anchor_time": "02:00",  # "set to start of next hour"
-      "delivery_lead_time": 3600,
-      "duality_gap_threshold": 0.01,
+      "delivery_anchor_time": "02:00",
+      "description": "",
+      "duality_gap_threshold": 0.15,
+      "duration_active": 0.0,
+      "duration_delivery_lead":  900,
+      "duration_market_lead":  900,
+      "duration_negotiation": 0.0,
+      "duration_reconciliation": 0.0,
       "future_horizon": 86400,
       "initial_market_state": "Inactive",
       "interval_duration": 3600,
       "intervals_to_clear": 24,
       "market_clearing_interval": 86400,
-      "market_lead_time": 900,
       "market_order": 1,
-      "market_series_name": "Day-Ahead_Auction",
-      "market_to_be_refined": null,
+      "name": "Day-Ahead_Auction",
+      "actuate_assets": false,
       "method": "Interpolation",
-      "negotiation_lead_time": 480,
-      "prior_market_in_series": null,
-      "real_time_duration": 900
+      "price_model": null,
+      "refined_series": null
+    },
+    {
+      "class_name": "MarketSeries",
+      "module_name": "tent.market.market_series",
+      "market_class_name": "Auction",
+      "market_module_name": "tent.market.auction",
+      "commitment": true,
+      "default_price": 0.0428,
+      "delivery_anchor_time": "02:00",
+      "description": "",
+      "duality_gap_threshold": 0.15,
+      "duration_active": 0.0,
+      "duration_delivery_lead":  300,
+      "duration_market_lead":  300,
+      "duration_negotiation": 0.0,
+      "duration_reconciliation": 0.0,
+      "future_horizon": 900,
+      "initial_market_state": "Inactive",
+      "interval_duration": 900,
+      "intervals_to_clear": 24,
+      "market_clearing_interval": 900,
+      "market_order": 1,
+      "name": "Real-Time_Auction",
+      "method": "Interpolation",
+      "price_model": null,
+      "refined_series": null
     }
   ],
   "neighbors": [
     {
-      "class_name": "TNSNeighbor",
-      "module_name": "tns_neighbor",
+      "class_name": "Neighbor",
+      "module_name": "tent.neighbor",
       "convergence_threshold": 0.05,
       "cost_parameters": null,
       "default_vertices": [[0.045, 0.0, -10000.0]],
@@ -279,41 +277,35 @@
       "description": "PNNL_Campus",
       "effective_impedance": 0.0,
       "friend": false,
-      "location": "",  # from config (tn.name)
+      "location": "City_Of_Richland",
       "loss_factor": 0.01,
       "maximum_power": 0.0,
       "mechanism": "consensus",
       "meter_points": null,
       "minimum_power": -20000,
       "name": "PNNL_Campus",
-      "subclass": null,
       "transactive": true,
-      "up_or_down": "downstream",
-      "subscription_topic_postfix": "demand",
-      "publication_topic_postfix": "supply"
+      "up_or_down": "downstream"
     },
     {
-      "class_name": "BulkSupplier_dc",
-      "module_name": "bulk_supplier_dc",
+      "class_name": "BulkSupplierDC",
+      "module_name": "tent.neighbor.bulk_supplier_dc",
       "convergence_threshold": 0.0,
       "cost_parameters": [2000.0, 0.0, 0.0],
-      # second default_vertex should be: [d1.marginalPrice / (1 - supplier.lossFactor), d1.cost + d2.power * (d1.marginalPrice + 0.5 * (d2.marginalPrice - d1.marginalPrice)), (1 - supplier.lossFactor) * supplier.maximumPower]
-      "default_vertices": [[0.04196, 2000.0, 0.0], []],
+      "default_vertices": [[0.04196, 2000.0, 0.0], [2040.8163265306123, 397584000.0, 196784.0]],
       "demand_month": 1,
       "demand_rate": 4.5,
-      "demand_threshold": 1e9,  # from config(monthly_peak_power)
-      "demand_threshold_coef": 1,  # from config (demand_threshold_coef)
+      "demand_threshold": 100000000.0,
+      "demand_threshold_coef": 0.8,
       "description": "The Bonneville Power Administration as electricity supplier to the City of Richland, WA",
       "effective_impedance": 0.0,
       "friend": false,
       "location": "",
-      "loss_factor": 0.01,  # from config (supplier_loss_factor)
+      "loss_factor": 0.02,
       "maximum_power": 200800.0,
       "mechanism": "consensus",
-      "meter_points": ["BpaElectricityMeter"],
       "minimum_power": 0.0,
       "name": "BPA",
-      "subclass": null,
       "up_or_down": "upstream"
     }
   ]

@@ -1,0 +1,12 @@
+{
+  "class_name": "WeatherDotGovTemperatureForecastModel",
+  "module_name": "transactive_node.weather_dot_gov_temperature_forecast_model",
+  "name": "TemperatureForecast",
+  "weather_vip": "platform.weather",
+  "location": {"lat": 46.2804, "long": -119.2752},
+  "external_platform": "",
+  "rpc_timeout": 15.0,
+  "temperature_point_name": "air_temperature",
+  "max_gap_time": 14400,
+  "tmy_fallback_path": "/home/volttron/configs/pasco_2017_dry_bulb_temperature.csv"
+}
