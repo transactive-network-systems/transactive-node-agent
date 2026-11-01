@@ -211,7 +211,8 @@ long step. In the agent that hook is a cooperative yield (`gevent.sleep(0)`): co
 messages and RPC replies are handled, and the iteration continues. The one real pause, `loop_sleep_duration`, is taken
 by the loop after each pass, so a pass with many yield points does not spend it many times over. Each market's events
 are timed; a pass longer than `slow_iteration_warning` seconds is logged at WARNING with the longest market and its
-time. An exception in a pass is logged with its traceback and the loop goes on.
+time (the agent times each market by wrapping TENT's per-market hook, `_run_market`). An exception in a pass is logged
+with its traceback and the loop goes on.
 
 ## Topics
 

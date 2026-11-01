@@ -104,7 +104,7 @@ def hub_agent(monkeypatch):
 def test_inner_yields_are_free_and_the_loop_pauses_once_per_iteration(hub_agent):
     agent, hub = hub_agent
     agent.market_series = [Series([LongMarket(agent, 'DA', yields=4), LongMarket(agent, 'RT', yields=2)])]
-    agent._state_machine_iteration()
+    agent._timed_iteration()
     assert hub.sleeps == [0] * (4 + 1 + 2 + 1), 'every yield inside the iteration is gevent.sleep(0)'
     agent._sleep()  # what the loop does after the iteration
     assert hub.sleeps[-1] == 0.25 and not agent._iterating
@@ -115,7 +115,7 @@ def test_a_message_delivered_during_a_long_iteration_is_handled_before_the_itera
     market = LongMarket(agent, 'DA', yields=3)
     agent.market_series = [Series([market])]
     hub.pending.append(lambda: agent.vip.pubsub.deliver('tns/CoR/Campus', {'price': 1}, sender='tn.city'))
-    agent._state_machine_iteration()
+    agent._timed_iteration()
     assert market.seen_during_events == [{'price': 1}], 'handled at the first inner yield, not after the iteration'
 
 
@@ -124,7 +124,7 @@ def test_without_inner_yields_the_message_waits_for_the_iteration_to_end(hub_age
     market = LongMarket(agent, 'DA', yields=0)
     agent.market_series = [Series([market])]
     hub.pending.append(lambda: agent.vip.pubsub.deliver('tns/CoR/Campus', {'price': 1}, sender='tn.city'))
-    agent._state_machine_iteration()
+    agent._timed_iteration()
     assert market.seen_during_events == [], 'the only yield is after the market; the message arrives afterwards'
     assert agent.received == [{'price': 1}]
 
@@ -140,14 +140,15 @@ def test_a_slow_iteration_is_warned_about_naming_the_longest_market(hub_agent, m
     agent.market_series = [Series([LongMarket(agent, 'DA', yields=1, work=takes(2.0)),
                                    LongMarket(agent, 'RT', yields=2, work=takes(2.0))])]
     with caplog.at_level(logging.WARNING, logger='transactive_node.agent'):
-        agent._state_machine_iteration()
+        agent._timed_iteration()
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "'RT'" in warnings[0] and 'took 6.0 s' in warnings[0] and 'at 4.0 s' in warnings[0]
     caplog.clear()
     agent.slow_iteration_warning = 10.0
     with caplog.at_level(logging.WARNING, logger='transactive_node.agent'):
-        agent._state_machine_iteration()
+        agent._timed_iteration()
     assert caplog.records == []
+    assert '_state_machine_iteration' not in vars(agent_module.TransactiveNodeAgent), 'TENT\'s iteration runs, not a copy'
 
 
 def test_a_failing_iteration_leaves_the_yield_mode_cleared(hub_agent, monkeypatch):
@@ -162,7 +163,7 @@ def test_a_failing_iteration_leaves_the_yield_mode_cleared(hub_agent, monkeypatc
     def once():
         calls.append(1)
         agent._stop_agent = True
-        return agent_module.TransactiveNodeAgent._state_machine_iteration(agent)
-    monkeypatch.setattr(agent, '_state_machine_iteration', once)
+        return agent_module.TransactiveNodeAgent._timed_iteration(agent)
+    monkeypatch.setattr(agent, '_timed_iteration', once)
     agent.state_machine_loop()
     assert not agent._iterating and hub.sleeps[-1] == 0.25, 'the loop\'s pause is still a real one'

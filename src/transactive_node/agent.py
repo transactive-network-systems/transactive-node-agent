@@ -118,6 +118,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self.configured_topics: dict[str, str] = {}      # the configuration's `topics`: subscribe key -> topic
         self.topics: dict = {}                            # configured_topics plus the derived archive and signal topics
         self._iterating = False                           # inside a state-machine iteration: _sleep only yields
+        self._slowest_market, self._slowest_step = None, 0.0   # the longest market step of the current iteration
         self.slow_iteration_warning: float = self.DEFAULT_SLOW_ITERATION_WARNING
         self._neighbor_senders: dict[str, str] = {}      # neighbor name -> identity its signals must be presented from
         self._sender_forms_logged: set[str] = set()      # neighbors whose accepted sender form was logged
@@ -319,37 +320,37 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         """
         while not self._stop_agent:
             try:
-                self._state_machine_iteration()
+                self._timed_iteration()
             except Exception:
                 _log.exception('State machine iteration failed; continuing with the next iteration.')
             finally:
                 self._iterating = False
             self._sleep()
 
-    def _state_machine_iteration(self):
-        """TENT's iteration (every meter point's poll, then every market's events, yielding after each market) with the
-        time of each market's events measured: an iteration longer than slow_iteration_warning is logged at WARNING
-        naming the longest market, so a deployment shows where its time goes."""
+    def _timed_iteration(self):
+        """TENT's iteration (meter polls, each market through _run_market, pruning) in yield mode, timed: one longer than
+        slow_iteration_warning is logged at WARNING naming the market whose step took longest, so a deployment shows
+        where its time goes."""
         self._iterating = True
+        self._slowest_market, self._slowest_step = None, 0.0
         started = time.monotonic()
-        slowest_market, slowest = None, 0.0
-        for meter_point in self.meter_points:
-            meter_point.poll()
-        for series in self.market_series:
-            for market in series:
-                market_started = time.monotonic()
-                market.events()
-                self._sleep()
-                took = time.monotonic() - market_started
-                if took > slowest:
-                    slowest_market, slowest = market.name, took
-            series.prune_expired()
-        self._iterating = False
+        try:
+            self._state_machine_iteration()
+        finally:
+            self._iterating = False
         total = time.monotonic() - started
         if total > self.slow_iteration_warning:
             _log.warning(f'A state-machine iteration of node {self.name!r} took {total:.1f} s (slow_iteration_warning is '
-                         f'{self.slow_iteration_warning:.0f} s); the longest market was {slowest_market!r} at '
-                         f'{slowest:.1f} s.')
+                         f'{self.slow_iteration_warning:.0f} s); the longest market was {self._slowest_market!r} at '
+                         f'{self._slowest_step:.1f} s.')
+
+    def _run_market(self, market):
+        """TENT's per-market wrap point: the market's events and the yield, timed for the slow-iteration warning."""
+        market_started = time.monotonic()
+        super(TransactiveNodeAgent, self)._run_market(market)
+        took = time.monotonic() - market_started
+        if took > self._slowest_step:
+            self._slowest_market, self._slowest_step = market.name, took
 
     @Core.receiver('onstop')
     def onstop(self, _, **__):
