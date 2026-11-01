@@ -149,8 +149,17 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
 
     def state_machine_loop(self):
+        """Run market state-machine iterations until the agent stops.
+
+        Each iteration yields to the hub at least once, so a node with no markets does not spin, and an exception in an
+        iteration is logged with its traceback and the loop continues; the greenlet does not die on a single failure.
+        """
         while not self._stop_agent:
-            self._state_machine_iteration()
+            try:
+                self._state_machine_iteration()
+            except Exception:
+                _log.exception('State machine iteration failed; continuing with the next iteration.')
+            self._sleep()
 
     @Core.receiver('onstop')
     def onstop(self, _, **__):
