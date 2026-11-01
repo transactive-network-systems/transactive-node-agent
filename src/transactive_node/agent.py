@@ -49,6 +49,7 @@ import sys
 import time
 
 from copy import deepcopy
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Callable
 from uuid import UUID
@@ -57,6 +58,7 @@ from tent.transactive_node import TransactiveNode
 from tent.utils.helpers import json_dumps, require_aware
 from tent.utils.timer import Timer
 from volttron_archivable import VolttronDataManager
+from transactive_node.host_keys import strip_host_keys
 
 from importlib.metadata import distribution, PackageNotFoundError
 try:
@@ -89,6 +91,9 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     SENDER_MISMATCH_LOG_PERIOD = 60.0     # [s] one warning per presented sender per period, with the count suppressed
     SLOW_ITERATION_KEY = 'slow_iteration_warning'   # agent key: [s] an outer iteration longer than this is warned about
     DEFAULT_SLOW_ITERATION_WARNING = 5.0
+    # Host keys (see transactive_node.host_keys) whose change cannot be taken in place: the topics and subscriptions
+    # derive from them, so the node is rebuilt.
+    REBUILDING_HOST_KEYS = frozenset({'db_topic', 'subscribe_all_platforms', 'topics'})
     ANCHOR_ENVIRONMENT_VARIABLE = 'TENT_SIMULATION_ANCHOR_TIME'
 
     def __init__(self, *args, **kwargs):
@@ -107,27 +112,22 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         construction and again when a configuration is torn down."""
         TransactiveNode.__init__(self, node_id=node_id, created=created)
         self._stop_agent = False
+        self._host_settings: dict = {}                    # the validated host values of the running configuration
         self.db_topic = 'TNS'
         self.subscribe_all_platforms = False
-        self.topics: dict = {}
+        self.configured_topics: dict[str, str] = {}      # the configuration's `topics`: subscribe key -> topic
+        self.topics: dict = {}                            # configured_topics plus the derived archive and signal topics
         self._iterating = False                           # inside a state-machine iteration: _sleep only yields
         self.slow_iteration_warning: float = self.DEFAULT_SLOW_ITERATION_WARNING
         self._neighbor_senders: dict[str, str] = {}      # neighbor name -> identity its signals must be presented from
         self._sender_forms_logged: set[str] = set()      # neighbors whose accepted sender form was logged
         self._sender_mismatches: dict[str, dict] = {}    # presented sender -> {'since', 'count'} of dropped signals
-        self.default_config.update({
-            # Agent Configurations:
-            "db_topic": self.db_topic,
-            "subscribe_all_platforms": self.subscribe_all_platforms,
-            "topics": self.topics,
-        })
 
     def _update_node_configurations(self, configs):
         updated_configs = super(TransactiveNodeAgent, self)._update_node_configurations(configs)
 
-        # Agent Configurations:
-        self.db_topic = updated_configs.get('db_topic', self.db_topic)
-        self.subscribe_all_platforms = bool(updated_configs.get('subscribe_all_platforms', self.subscribe_all_platforms))
+        # The agent's own settings were taken out of `configs` before TENT saw it (see _apply_host_settings); only the
+        # topics derived from the node's and neighbors' names are built here.
         archive_root = f'{self.db_topic}/archive/{self.name}'
         self.topics: dict = {
             # The node's archive traffic with the Application Historian (see VolttronDataManager): records out,
@@ -143,7 +143,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
                 _log.warning(f'No name found in neighbor configuration: {neighbor}')
             self.topics[f'{neighbor_name}_incoming_transactive_signal'] = f'{self.db_topic}/{neighbor_name}/{self.name}'
             self.topics[f'{neighbor_name}_outgoing_transactive_signal'] = f'{self.db_topic}/{self.name}/{neighbor_name}'
-        self.topics.update(updated_configs.get('topics', self.topics))
+        self.topics.update(self.configured_topics)
         return updated_configs
 
     def configure_main(self, config_name, action, contents):
@@ -163,17 +163,22 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         # below must not leak into it.
         contents = deepcopy(contents)
         self._apply_environment_anchor(contents)
-        # The neighbors' sender bindings are the agent's (the transport's), not TENT's: taken out before TENT sees the
-        # configuration, applied by the subscription wrapper.
-        neighbor_senders = self._extract_neighbor_senders(contents)
-        slow_iteration_warning = self._extract_slow_iteration_warning(contents)
+        # The agent's own keys (transport: topics, sender bindings, the slow-iteration threshold) are taken out before
+        # TENT sees the configuration; HOST_KEYS is the one list of them.
+        contents, host_values = strip_host_keys(contents)
+        host_settings = self._validate_host_settings(host_values)
         TransactiveNode.validate_configuration(contents)  # raises (ConfigurationError) before anything is torn down
+        self._warn_about_unbound_neighbors_in(contents, host_settings['neighbor_senders'])
         simulation_settings = {key: contents.get(key) for key in self.SIMULATION_KEYS}
         identity = {}
         if self._configured:
-            if action == 'UPDATE' and self.reconfigure(contents):
-                self._neighbor_senders = neighbor_senders
-                self.slow_iteration_warning = slow_iteration_warning
+            rebuilding_change = [key for key in self.REBUILDING_HOST_KEYS
+                                 if host_settings[key] != self._host_settings.get(key)]
+            if action == 'UPDATE' and rebuilding_change:
+                _log.info(f'Node {self.name!r} must be rebuilt for the new configuration: agent settings '
+                          f'{sorted(rebuilding_change)} changed.')
+            elif action == 'UPDATE' and self.reconfigure(contents):
+                self._apply_host_settings(host_settings)
                 _log.info(f'Node {self.name!r} took the updated configuration in place; no rebuild.')
                 return
             if action == 'UPDATE' and simulation_settings == self._simulation_settings:
@@ -188,38 +193,52 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             self._teardown_node(**identity)
         self._configured = True
         self._simulation_settings = simulation_settings
-        self._neighbor_senders = neighbor_senders  # before configure_node: neighbors subscribe as they are built
-        self.slow_iteration_warning = slow_iteration_warning
+        self._apply_host_settings(host_settings)  # before configure_node: neighbors subscribe as they are built
         self.configure_node(contents)
         self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
 
-    def _extract_neighbor_senders(self, contents: dict) -> dict[str, str]:
-        """Take the `sender` key out of every neighbor entry (TENT's Neighbor.Config does not know it) and return the
-        bindings, neighbor name -> expected sender. A transactive neighbor without one is accepted from any sender,
-        which is said once here at WARNING."""
+    def _validate_host_settings(self, host_values: Mapping) -> dict:
+        """The agent's settings from the values strip_host_keys took out, checked and with defaults filled in:
+        db_topic, subscribe_all_platforms, topics, slow_iteration_warning and neighbor_senders (name -> sender)."""
+        top = host_values.get('', {})
+        db_topic = top.get('db_topic', 'TNS')
+        if not isinstance(db_topic, str) or not db_topic:
+            raise ValueError(f'db_topic must be a non-empty string; got {db_topic!r}.')
+        subscribe_all = top.get('subscribe_all_platforms', False)
+        if not isinstance(subscribe_all, bool):
+            raise ValueError(f'subscribe_all_platforms must be true or false; got {subscribe_all!r}.')
+        topics = top.get('topics') or {}
+        if not isinstance(topics, Mapping) or not all(isinstance(k, str) and isinstance(v, str) and k and v
+                                                      for k, v in topics.items()):
+            raise ValueError(f'topics must map subscribe keys to topics (non-empty strings); got {topics!r}.')
+        slow = top.get(self.SLOW_ITERATION_KEY, self.DEFAULT_SLOW_ITERATION_WARNING)
+        if isinstance(slow, bool) or not isinstance(slow, (int, float)) or slow <= 0:
+            raise ValueError(f'{self.SLOW_ITERATION_KEY} must be a positive number of seconds; got {slow!r}.')
         senders = {}
-        for entry in contents.get('neighbors') or []:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get('name')
-            sender = entry.pop(self.SENDER_KEY, None)
-            if sender is not None:
-                if not isinstance(sender, str) or not sender:
-                    raise ValueError(f'neighbor {name!r}: sender must be a non-empty string, the identity its signals '
-                                     f'arrive from ("identity@instance" or "identity"); got {sender!r}.')
-                senders[name] = sender
-            elif entry.get('transactive'):
-                _log.warning(f'Signals from {name!r} are not bound to a sender: any publisher on the bus may send them. '
-                             f'Set "sender" in the neighbor entry.')
-        return senders
+        for name, taken in host_values.get('neighbors', {}).items():
+            sender = taken.get(self.SENDER_KEY)
+            if not isinstance(sender, str) or not sender:
+                raise ValueError(f'neighbor {name!r}: sender must be a non-empty string, the identity its signals '
+                                 f'arrive from ("identity@instance" or "identity"); got {sender!r}.')
+            senders[name] = sender
+        return {'db_topic': db_topic, 'subscribe_all_platforms': subscribe_all, 'topics': dict(topics),
+                self.SLOW_ITERATION_KEY: float(slow), 'neighbor_senders': senders}
 
-    def _extract_slow_iteration_warning(self, contents: dict) -> float:
-        """Take the agent's slow_iteration_warning key out of the configuration (TENT's node Config does not know it)
-        and return it in seconds; the default when absent."""
-        value = contents.pop(self.SLOW_ITERATION_KEY, self.DEFAULT_SLOW_ITERATION_WARNING)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-            raise ValueError(f'{self.SLOW_ITERATION_KEY} must be a positive number of seconds; got {value!r}.')
-        return float(value)
+    def _apply_host_settings(self, host_settings: dict):
+        self._host_settings = host_settings
+        self.db_topic = host_settings['db_topic']
+        self.subscribe_all_platforms = host_settings['subscribe_all_platforms']
+        self.configured_topics = dict(host_settings['topics'])
+        self.slow_iteration_warning = host_settings[self.SLOW_ITERATION_KEY]
+        self._neighbor_senders = dict(host_settings['neighbor_senders'])
+
+    @staticmethod
+    def _warn_about_unbound_neighbors_in(contents: Mapping, senders: Mapping):
+        """A transactive neighbor without a sender binding is accepted from any publisher; say so once per configuration."""
+        for entry in contents.get('neighbors') or []:
+            if isinstance(entry, dict) and entry.get('transactive') and entry.get('name') not in senders:
+                _log.warning(f'Signals from {entry.get("name")!r} are not bound to a sender: any publisher on the bus may '
+                             f'send them. Set "sender" in the neighbor entry.')
 
     # ------------------------------------------------------------------------------------------- sender identity
 

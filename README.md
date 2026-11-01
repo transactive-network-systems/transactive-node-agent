@@ -41,6 +41,11 @@ runs; `sample_config/weather_dot_gov_temperature_forecast_model.json` is one `in
 
 ### Agent keys
 
+These keys are the agent's, not TENT's: the agent reads them and removes them before TENT validates and builds the
+configuration. `transactive_node.HOST_KEYS` (importable without the platform) names them, list by list, for tools that
+validate a node configuration with TENT's models.
+
+
 | Key | Default | Meaning |
 |---|---|---|
 | `db_topic` | `TNS` | Root of every topic the agent derives (archive and signal topics below). The deployment uses `tns`. |
