@@ -90,8 +90,10 @@ The archive. The deployment uses `VolttronDataManager`:
 Registration paths:
 
 - `rpc`: the historian's `create_tables` RPC is called with `{"definitions": [...], "enumerations": [...],
-  "schema_version": N}`: the table definitions, the enumerations they name (`{"name", "members"}` each, from
-  `tent.enumerations`) and this TENT's `tent.data_manager.ARCHIVE_SCHEMA_VERSION`. It returns the status mapping below. The call is repeated every `rpc_retry_period` seconds until it is answered, for at most `rpc_total_timeout`.
+  "application": "TENT", "schema_version": N, "fingerprint": "...", "application_version": "..."}`: the table
+  definitions, the enumerations they name (`{"name", "members"}` each, from `tent.enumerations`) and this TENT's
+  archive schema (`tent.data_manager.archive_schema()`: application `TENT`, `ARCHIVE_SCHEMA_VERSION`, the fingerprint
+  of the shipped definitions, the installed TENT version). It returns the status mapping below. The call is repeated every `rpc_retry_period` seconds until it is answered, for at most `rpc_total_timeout`.
 - `pubsub`: the node subscribes to its status topic on all platforms, publishes the same payload with `publisher` (the
   node's name) and a fresh `request_id` on its definitions topic, and waits `rpc_timeout` seconds for the status carrying that id. Without an answer
   it logs an error and publishes again with a new id every `rpc_retry_period` seconds, giving up after
@@ -111,9 +113,10 @@ The status mapping (the RPC reply and the status message are the same shape):
 }
 ```
 
-`schema_version` is the archive schema version the historian's TENT writes; it is logged beside this node's. A
-historian whose version differs refuses the registration with `error` and a message naming both versions, so the
-node does not start archiving; the two TENT installations must be of the same archive schema version.
+`schema_version` is the archive schema version the historian recorded for the application `TENT` (this node's own,
+when the node is the first TENT to register); it is logged beside this node's. A historian whose recorded version
+differs refuses the registration with `error` and a message naming both versions, so the node does not start
+archiving; every TENT archiving into one historian database must be of the same archive schema version.
 
 Records are not published one at a time. They are queued and published in batches: the backlog once registration
 succeeds, then everything queued every `publish_interval` seconds, in messages of at most `max_batch_records` records.
