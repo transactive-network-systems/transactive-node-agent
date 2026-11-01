@@ -47,9 +47,10 @@ import logging
 import sys
 
 from datetime import datetime
+from typing import Callable
 
 from tent.transactive_node import TransactiveNode
-from tent.utils.helpers import json_encoder
+from tent.utils.helpers import json_encoder, require_aware
 from tent.utils.timer import Timer
 
 from importlib.metadata import distribution, PackageNotFoundError
@@ -87,6 +88,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         # Initial State:
         self._stop_agent = False
         self._state_machine_greenlet = None
+        self._subscriptions: list[tuple[str, Callable, bool]] = []  # (prefix, wrapper, all_platforms) registered
 
         # Default configuration.
         self.db_topic = 'TNS'
@@ -176,32 +178,45 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             _log.warning(f'Failed to serialize outgoing signal to {recipient}: {signal_dict} with error: {e}')
 
     def register_subscription(self, subscribe_key, callback):
+        """Subscribe the callback to the topic the configuration maps `subscribe_key` to.
+
+        The platform matches subscriptions by string prefix, so a subscription to devices/.../HP1 also receives
+        devices/.../HP10; the wrapper accepts a publication only when its topic is the configured topic itself or lies
+        below it (topic == prefix or topic starts with prefix + '/').
+        """
+        subscription_topic = self.topics.get(subscribe_key)
+        if not subscription_topic:
+            _log.warning(f'No subscription topic registered for subscribe_key: {subscribe_key}')
+            return
+
         # TODO: This really needs to be aware of the topic format that is being parsed, i.e., devices, weather, etc.
         #  We could do separate wrappers for each, or have configurable transforms.
         def wrapper(_, __, ___, topic, headers, message):
+            if not (topic == subscription_topic or topic.startswith(subscription_topic + '/')):
+                return
             try:
-                time_received = datetime.fromisoformat(headers[headers_mod.TIMESTAMP])
-                if topic.startswith('devices/'):
+                time_received = self._time_from_headers(headers)
+                if topic.startswith('devices/') or topic.startswith('analysis/'):
                     message = message[0]
-                elif topic.startswith('analysis/'):
-                    message = message[0]
-                else:  # TODO: Handle datalogger & any other topic types we might encounter.
-                    message = message
-                return callback(time_received, subscribe_key, message)
-            except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
-                _log.warning(f'Unable to decode incoming subscription "{topic}": {e}')
-            except Exception as e:
-                _log.warning(f'An unexpected error occurred while receiving subscription "{topic}": {e}')
+                # TODO: Handle datalogger & any other topic types we might encounter.
+                callback(time_received, subscribe_key, message)
+            except Exception:
+                _log.exception(f'Subscription callback for key {subscribe_key!r} failed on topic "{topic}".')
 
-        subscription_topic = self.topics.get(subscribe_key)
-        if subscription_topic:
-            _log.info(f'Subscribing for key: {subscribe_key} to topic: {subscription_topic}')
-            self.vip.pubsub.subscribe(peer='pubsub',
-                                      prefix=subscription_topic,
-                                      callback=wrapper,
-                                      all_platforms=self.subscribe_all_platforms)
-        else:
-            _log.warning(f'No subscription topic registered for subscribe_key: {subscribe_key}')
+        _log.info(f'Subscribing for key: {subscribe_key} to topic: {subscription_topic}')
+        self.vip.pubsub.subscribe(peer='pubsub',
+                                  prefix=subscription_topic,
+                                  callback=wrapper,
+                                  all_platforms=self.subscribe_all_platforms)
+        self._subscriptions.append((subscription_topic, wrapper, self.subscribe_all_platforms))
+
+    @staticmethod
+    def _time_from_headers(headers) -> datetime:
+        """The publication's TIMESTAMP header as an aware datetime; the node's current time when there is none."""
+        timestamp = headers.get(headers_mod.TIMESTAMP) if headers else None
+        if not timestamp:
+            return Timer.now()
+        return require_aware(datetime.fromisoformat(timestamp), f'{headers_mod.TIMESTAMP} header')
 
     def _sleep(self):
         gevent.sleep(self.loop_sleep_duration)
