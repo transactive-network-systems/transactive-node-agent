@@ -243,3 +243,8 @@ def node():
 @pytest.fixture
 def simulated_node():
     return FakeNode(simulation=True)
+
+
+@pytest.fixture
+def node_factory():
+    return FakeNode
