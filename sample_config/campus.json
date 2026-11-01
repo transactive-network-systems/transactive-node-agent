@@ -9,7 +9,7 @@
   "tz": "UTC",
   "data_manager": {
     "class_name": "VolttronDataManager",
-    "module_name": "transactive_node.data_manager",
+    "module_name": "volttron_archivable.data_manager",
     "historian_vip": "tns.historian",
     "external_platform": "central",
     "registration": "pubsub"

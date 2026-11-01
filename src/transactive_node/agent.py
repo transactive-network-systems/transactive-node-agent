@@ -55,7 +55,7 @@ from uuid import UUID
 from tent.transactive_node import TransactiveNode
 from tent.utils.helpers import json_dumps, require_aware
 from tent.utils.timer import Timer
-from transactive_node.data_manager import VolttronDataManager
+from volttron_archivable import VolttronDataManager
 
 from importlib.metadata import distribution, PackageNotFoundError
 try:
@@ -197,10 +197,9 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             self.vip.pubsub.unsubscribe(peer='pubsub', prefix=prefix, callback=wrapper, all_platforms=all_platforms)
         self._subscriptions = []
         # The data manager publishes queued archive records on a timer; stop it so the queue is flushed and no greenlet
-        # outlives the configuration. (TENT's DataManager base has no stop(); only VolttronDataManager defines one.)
-        stop = getattr(self._data_manager, 'stop', None)
-        if stop is not None:
-            stop()
+        # outlives the configuration (every DataManager has stop(); the base one holds nothing).
+        if self._data_manager is not None:
+            self._data_manager.stop()
         self._init_node_state(node_id=node_id, created=created)
 
     def state_machine_loop(self):

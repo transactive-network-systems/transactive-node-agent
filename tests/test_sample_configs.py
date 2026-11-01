@@ -38,7 +38,7 @@ def test_node_sample_configures_an_agent(path, weather_file):
         if 'weather_file_path' in service:
             service['weather_file_path'] = weather_file  # the deployed path exists only in the container
     # The data manager is replaced so no sqlite file is written and the historian is the fake RPC peer.
-    config['data_manager'] = {'class_name': 'VolttronDataManager', 'module_name': 'transactive_node.data_manager',
+    config['data_manager'] = {'class_name': 'VolttronDataManager', 'module_name': 'volttron_archivable.data_manager',
                               'historian_vip': 'tns.historian'}
     agent = TransactiveNodeAgent()
     agent.configure_main('config', 'NEW', deepcopy(config))

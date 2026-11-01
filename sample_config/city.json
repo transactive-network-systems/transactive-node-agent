@@ -9,7 +9,7 @@
   "tz": "UTC",
   "data_manager": {
     "class_name": "LocalDataManager",
-    "module_name": "tent.data_manager.local_data_manager",
+    "module_name": "archivable.local_data_manager",
     "db_params": {
       "url": "sqlite:///testent.sqlite"
     }

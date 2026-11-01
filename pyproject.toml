@@ -6,8 +6,9 @@ build-backend = "poetry.core.masonry.api"
 volttron-transactive-node = "transactive_node.agent:main"
 
 # TENT resolves these class names without module_name once this package is installed (tent.registry entry points).
+# VolttronDataManager is volttron-lib-archivable's; it is registered here so the deployed configurations can name it.
 [tool.poetry.plugins."tent.components"]
-VolttronDataManager = "transactive_node.data_manager:VolttronDataManager"
+VolttronDataManager = "volttron_archivable.data_manager:VolttronDataManager"
 TNSMeterPoint = "transactive_node.tns_meter_point:TNSMeterPoint"
 WeatherDotGovTemperatureForecastModel = "transactive_node.weather_dot_gov_temperature_forecast_model:WeatherDotGovTemperatureForecastModel"
 TNSDirectRatioActuationManager = "transactive_node.local_asset.actuation_manager.tns_direct_ratio:TNSDirectRatioActuationManager"
@@ -40,8 +41,10 @@ classifiers = [
 python = "^3.11"
 volttron-core = ">=2.0.0rc0"
 gevent = ">=23.0"
-# tent (code/TENT in this project) is required and is not on PyPI. Install it into the platform's environment before
-# this agent, with `pip install -e ../TENT` or `vctl install-lib ../TENT`.
+# tent (code/TENT in this project), lib-archivable and volttron-lib-archivable (code/tns-utilities) are required and
+# are not on PyPI. Install them into the platform's environment before this agent:
+#   pip install -e ../tns-utilities/lib-archivable -e ../tns-utilities/volttron-lib-archivable -e ../TENT
+# (or vctl install-lib each). volttron-lib-archivable brings the VolttronDataManager this agent archives through.
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"

@@ -14,7 +14,7 @@ CONFIG = {
     'db_topic': 'tns',
     'subscribe_all_platforms': True,
     'topics': {'METERS': 'devices/Campus/B/METERS'},
-    'data_manager': {'class_name': 'VolttronDataManager', 'module_name': 'transactive_node.data_manager',
+    'data_manager': {'class_name': 'VolttronDataManager', 'module_name': 'volttron_archivable.data_manager',
                      'historian_vip': 'tns.historian'},
     'meter_points': [{'class_name': 'TNSMeterPoint', 'module_name': 'transactive_node.tns_meter_point',
                       'name': 'Meter', 'point_name': 'WholeBuildingPower',
@@ -93,7 +93,7 @@ def test_pubsub_registration_subscribes_to_the_status_topic_on_all_platforms_and
     agent = TransactiveNodeAgent()
     contents = deepcopy(CONFIG)
     contents['subscribe_all_platforms'] = False
-    contents['data_manager'] = {'class_name': 'VolttronDataManager', 'module_name': 'transactive_node.data_manager',
+    contents['data_manager'] = {'class_name': 'VolttronDataManager', 'module_name': 'volttron_archivable.data_manager',
                                 'historian_vip': 'tns.historian', 'registration': 'pubsub', 'rpc_total_timeout': 0}
     pubsub = agent.vip.pubsub
 

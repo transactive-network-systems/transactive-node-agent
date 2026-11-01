@@ -9,7 +9,7 @@ The package also ships the VOLTTRON-specific components a node configuration can
 
 | Class | Module | Role |
 |---|---|---|
-| `VolttronDataManager` | `transactive_node.data_manager` | Registers archive tables with the Application Historian (RPC or pubsub) and publishes archive records on the node's archive topic. |
+| `VolttronDataManager` | `volttron_archivable.data_manager` (the `volttron-lib-archivable` library, registered by this package's `tent.components` entry points) | Registers archive tables with the Application Historian (RPC or pubsub) and publishes archive records on the node's archive topic. |
 | `TNSMeterPoint` | `transactive_node.tns_meter_point` | A meter point fed by a `devices/` publication: one named point of the all-points message. |
 | `WeatherDotGovTemperatureForecastModel` | `transactive_node.weather_dot_gov_temperature_forecast_model` | Hourly temperature forecast from the VOLTTRON weather.gov agent, by RPC. |
 | `TNSDirectRatioActuationManager` | `transactive_node.local_asset.actuation_manager.tns_direct_ratio` | Sets and reverts points through the platform actuator agent. |
@@ -17,10 +17,11 @@ The package also ships the VOLTTRON-specific components a node configuration can
 
 ## Installation
 
-TENT (`code/TENT` in this project) is not on PyPI. Install it into the platform's environment first, then the agent:
+TENT (`code/TENT` in this project) and the archive libraries `lib-archivable` and `volttron-lib-archivable`
+(`code/tns-utilities`) are not on PyPI. Install them into the platform's environment first, then the agent:
 
 ```shell
-pip install -e ../TENT
+pip install -e ../tns-utilities/lib-archivable -e ../tns-utilities/volttron-lib-archivable -e ../TENT
 vctl install . --vip-identity tn.campus --agent-config sample_config/campus.json --start
 ```
 
@@ -67,7 +68,7 @@ The archive. The deployment uses `VolttronDataManager`:
 ```json
 "data_manager": {
   "class_name": "VolttronDataManager",
-  "module_name": "transactive_node.data_manager",
+  "module_name": "volttron_archivable.data_manager",
   "historian_vip": "tns.historian",
   "external_platform": "central",
   "registration": "pubsub"
@@ -88,10 +89,11 @@ The archive. The deployment uses `VolttronDataManager`:
 
 Registration paths:
 
-- `rpc`: the historian's `create_tables` RPC is called with `{"definitions": [...], "schema_version": N}`, the list
-  of definitions beside this TENT's `tent.data_manager.ARCHIVE_SCHEMA_VERSION`, and returns the status mapping below. The call is repeated every `rpc_retry_period` seconds until it is answered, for at most `rpc_total_timeout`.
-- `pubsub`: the node subscribes to its status topic on all platforms, publishes the definitions (with the same
-  `schema_version`) on its definitions topic with a fresh `request_id`, and waits `rpc_timeout` seconds for the status carrying that id. Without an answer
+- `rpc`: the historian's `create_tables` RPC is called with `{"definitions": [...], "enumerations": [...],
+  "schema_version": N}`: the table definitions, the enumerations they name (`{"name", "members"}` each, from
+  `tent.enumerations`) and this TENT's `tent.data_manager.ARCHIVE_SCHEMA_VERSION`. It returns the status mapping below. The call is repeated every `rpc_retry_period` seconds until it is answered, for at most `rpc_total_timeout`.
+- `pubsub`: the node subscribes to its status topic on all platforms, publishes the same payload with `publisher` (the
+  node's name) and a fresh `request_id` on its definitions topic, and waits `rpc_timeout` seconds for the status carrying that id. Without an answer
   it logs an error and publishes again with a new id every `rpc_retry_period` seconds, giving up after
   `rpc_total_timeout`. Status messages for other request ids are logged at debug level and ignored.
 
@@ -126,8 +128,8 @@ Security note on the `pubsub` path: the platform has no per-publisher capability
 RPCs, so any agent on any platform of the federation can publish definitions or records under any node's name. The
 sender-identity check for signals and archive traffic (audit item A-SEC-01) is deferred by decision of the owner.
 
-`LocalDataManager` from TENT (`tent.data_manager.local_data_manager`, with `db_params`) writes to a database directly
-and is what the city and small-office samples use.
+`LocalDataManager` from `lib-archivable` (`archivable.local_data_manager`, with `db_params`) writes to a database
+directly and is what the city and small-office samples use.
 
 ### Component lists
 
@@ -228,6 +230,7 @@ slashes for an absolute SQLite path); the database lives on the `central_volume`
 Installation, outside the containers:
 
 ```shell
+vctl install-lib /path/to/tns-utilities/lib-archivable
 vctl install-lib /path/to/TENT
 vctl install /path/to/volttron-transactive-node-historian --vip-identity tns.historian --tag historian --start
 vctl config store tns.historian config containers/tent/central/agent_configs/tns-historian.json
