@@ -174,3 +174,22 @@ def test_archive_record_carries_the_location_and_point(node):
     record = model.get_record()
     assert record['location'] == [LOCATION] and record['temperature_point_name'] == 'air_temperature'
     assert record['information_type'].name == 'Temperature'
+
+
+def test_weather_identity_location_and_timeout_are_reconfigurable_but_not_the_file(node, fixed_now):
+    from tent.config import ConfigurationError, ReconfigurationError
+    model = make_model(node)
+    model.reconfigure({'weather_vip': 'weather.central', 'external_platform': 'central', 'rpc_timeout': 2.0,
+                       'location': {'station': 'KPSC'}})
+    market = Market('RT', fixed_now + timedelta(hours=1), timedelta(hours=1), 1)
+    node.vip.rpc.reply = [dict(station='KPSC', weather_results=reply_for(2)[0]['weather_results'])]
+    model.update_information(market)
+    peer, _, args, kwargs = node.vip.rpc.calls[0]
+    assert (peer, args[0], kwargs) == ('weather.central', [{'station': 'KPSC'}], {'external_platform': 'central'})
+    assert node.vip.rpc.calls[0] and model.config_version == 2
+    with pytest.raises(ReconfigurationError):
+        model.reconfigure({'weather_file_path': '/tmp/x.csv'})
+    with pytest.raises(ConfigurationError, match='weather_file_path'):
+        make_model(node, weather_file_path='/tmp/x.csv')
+    assert WeatherDotGovTemperatureForecastModel.Config.reconfigurable_fields() >= {'weather_vip', 'external_platform',
+                                                                                      'rpc_timeout', 'location'}

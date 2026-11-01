@@ -17,7 +17,7 @@ CONFIG = {
     'data_manager': {'class_name': 'VolttronDataManager', 'module_name': 'transactive_node.data_manager',
                      'historian_vip': 'tns.historian'},
     'meter_points': [{'class_name': 'TNSMeterPoint', 'module_name': 'transactive_node.tns_meter_point',
-                      'name': 'Meter', 'point_name': 'WholeBuildingPower', 'external_platform': False,
+                      'name': 'Meter', 'point_name': 'WholeBuildingPower',
                       'subscribe_key': 'METERS', 'measurement_type': 'AverageDemandkW', 'measurement_unit': 'kWh'}],
     'neighbors': [{'class_name': 'Neighbor', 'module_name': 'tent.neighbor', 'name': 'CoR', 'transactive': True,
                    'up_or_down': 'upstream'}],
@@ -113,6 +113,7 @@ def test_pubsub_registration_subscribes_to_the_status_topic_on_all_platforms_and
     assert agent.data_manager.archive_ready and agent.vip.rpc.calls == []
     assert [t for t, _, _ in pubsub.published if t.endswith('/records')], 'the queued rows were flushed'
 
+    contents['topics'] = {'METERS': 'devices/Campus/C/METERS'}  # a topic change: the node must be rebuilt
     agent.configure_main('config', 'UPDATE', contents)
     assert 'tns/archive/Campus/status' in {p for p, _, _ in pubsub.unsubscribed}
     assert len([p for p, _, _ in pubsub.subscriptions if p == 'tns/archive/Campus/status']) == 1
@@ -205,8 +206,52 @@ def test_teardown_on_update_stops_the_data_manager_and_flushes_its_queue():
     flusher = first_dm._flusher
     first_dm.archive_data({'table_name': 'test_table', 'data': {'id': 'queued'}})
     before = len(agent.vip.pubsub.published)
-    agent.configure_main('config', 'UPDATE', deepcopy(CONFIG))
+    rebuilt = deepcopy(CONFIG)
+    rebuilt['neighbors'] = []  # a removed component: the node must be rebuilt
+    agent.configure_main('config', 'UPDATE', rebuilt)
     assert flusher.dead and first_dm._flusher is None
     flushed = [m for t, _, m in agent.vip.pubsub.published[before:] if t.endswith('/records')]
     assert any(any(r.get('data', {}).get('id') == 'queued' for r in m) for m in flushed)
     assert agent.data_manager is not first_dm and agent.data_manager._flusher is not None
+
+
+def test_update_that_changes_only_reconfigurable_fields_is_taken_in_place(caplog):
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    first_id, first_dm, meter = agent.id, agent.data_manager, agent.meter_points[0]
+    subscriptions_before = list(agent.vip.pubsub.subscriptions)
+    changed = deepcopy(CONFIG)
+    changed['meter_points'][0]['scale_factor'] = -1.0
+    with caplog.at_level(logging.INFO, logger='transactive_node.agent'):
+        agent.configure_main('config', 'UPDATE', changed)
+    assert agent.id == first_id and agent.data_manager is first_dm and agent.meter_points[0] is meter
+    assert meter.scale_factor == -1.0 and meter.config_version == 2
+    assert agent.vip.pubsub.subscriptions == subscriptions_before and agent.vip.pubsub.unsubscribed == []
+    assert len(agent.core.spawned) == 1, 'no second state-machine greenlet'
+    assert any('in place' in r.getMessage() for r in caplog.records)
+
+
+def test_a_changed_data_manager_block_rebuilds_the_node():
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    first_dm = agent.data_manager
+    changed = deepcopy(CONFIG)
+    changed['data_manager']['publish_interval'] = 5.0
+    agent.configure_main('config', 'UPDATE', changed)
+    assert agent.data_manager is not first_dm and agent.data_manager.publish_interval == 5.0
+    assert first_dm._flusher is None, 'the previous data manager was stopped'
+
+
+def test_invalid_update_is_refused_before_the_running_node_is_touched():
+    from tent.config import ConfigurationError
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    first_id, first_dm = agent.id, agent.data_manager
+    subscriptions_before = list(agent.vip.pubsub.subscriptions)
+    bad = deepcopy(CONFIG)
+    bad['meter_points'][0]['pointname'] = 'Typo'
+    with pytest.raises(ConfigurationError, match="TNSMeterPoint 'Meter': unknown configuration key 'pointname'"):
+        agent.configure_main('config', 'UPDATE', bad)
+    assert agent.id == first_id and agent.data_manager is first_dm and agent._configured
+    assert agent.vip.pubsub.subscriptions == subscriptions_before and agent.vip.pubsub.unsubscribed == []
+    assert not first_dm._flusher.dead

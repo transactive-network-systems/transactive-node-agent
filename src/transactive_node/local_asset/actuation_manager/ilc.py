@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from typing import Union
 
+from tent.config import ConfigModel, Setting
 from tent.utils.log import setup_logging
 from tent.utils.timer import Timer
 from tent.local_asset.actuation_manager.external_target import ExternalTargetActuationManager
@@ -14,13 +15,17 @@ _log = logging.getLogger(__name__)
 class ILCActuationManager(ExternalTargetActuationManager):
     """Hands each interval's scheduled power to an ILC agent as a demand target, published on `ilc_target_topic`."""
 
-    def __init__(self, ilc_target_topic: str, transactive_node=None, **kwargs):
+    class Config(ExternalTargetActuationManager.Config):
+        ilc_target_topic: str = Setting(..., min_length=1, description='Topic the ILC agent reads demand targets from.')
+
+    def __init__(self, parent=None, occupancy_manager=None, transactive_node=None, config: ConfigModel | None = None,
+                 **kwargs):
         if transactive_node is None:
             raise ValueError('ILCActuationManager requires transactive_node: targets are published through its vip.')
-        if not ilc_target_topic:
-            raise ValueError('ILCActuationManager requires ilc_target_topic, the topic the ILC agent listens on.')
-        super(ILCActuationManager, self).__init__(transactive_node=transactive_node, **kwargs)
-        self.ilc_target_topic = str(ilc_target_topic)
+        cfg = self._configure(config, kwargs)
+        super(ILCActuationManager, self).__init__(parent=parent, occupancy_manager=occupancy_manager,
+                                                  transactive_node=transactive_node, config=cfg)
+        self.ilc_target_topic: str = cfg.ilc_target_topic
 
     def set_target(self, target: Union[float, None], start: datetime, end: datetime):
         target_id: str = f'{self.parent.name}_{start}'

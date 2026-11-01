@@ -138,20 +138,27 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     def configure_main(self, config_name, action, contents):
         """Build the node from the configuration store's `config`.
 
-        An UPDATE is a full rebuild: the previous configuration is torn down first (loop stopped, bus subscriptions
-        dropped, every component forgotten) and the node is built again from the new contents. When the simulation
-        settings are unchanged the rebuilt node continues the same run: it keeps its identity and creation time, so its
-        archive row is appended as a new version and the simulated clock keeps its anchor. When they changed, or on a
-        NEW, the node is a new run.
+        The contents are validated through TENT's configuration models first, so a configuration the models reject is
+        refused before the running node is touched. On an UPDATE the running node is asked to take the new
+        configuration in place (TransactiveNode.reconfigure: only reconfigurable fields of existing components
+        changed); when it cannot, the node is rebuilt: the previous configuration is torn down (loop stopped, bus
+        subscriptions dropped, every component forgotten) and the node is built again from the new contents. When the
+        simulation settings are unchanged the rebuilt node continues the same run: it keeps its identity and creation
+        time, so its archive row is appended as a new version and the simulated clock keeps its anchor. When they
+        changed, or on a NEW, the node is a new run.
         """
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
         # Work on a copy: the config store hands over the same object again on a later UPDATE, and the anchor inserted
         # below must not leak into it.
         contents = deepcopy(contents)
         self._apply_environment_anchor(contents)
+        TransactiveNode.validate_configuration(contents)  # raises (ConfigurationError) before anything is torn down
         simulation_settings = {key: contents.get(key) for key in self.SIMULATION_KEYS}
         identity = {}
         if self._configured:
+            if action == 'UPDATE' and self.reconfigure(contents):
+                _log.info(f'Node {self.name!r} took the updated configuration in place; no rebuild.')
+                return
             if action == 'UPDATE' and simulation_settings == self._simulation_settings:
                 identity = {'node_id': self.id, 'created': self.real_time_created}
                 _log.info(f'Rebuilding node {self.name!r} for the updated configuration as the same run '

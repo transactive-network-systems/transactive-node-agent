@@ -46,8 +46,12 @@ import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from math import ceil
+from typing import Any
 from zoneinfo import ZoneInfo
 
+from pydantic import field_validator
+
+from tent.config import ConfigModel, Setting
 from tent.information_service_model.temperature_forecast_model import TemperatureForecastModel
 from tent.utils.helpers import parse_datetime, require_aware
 from tent.utils.timer import Timer
@@ -77,38 +81,44 @@ class WeatherDotGovTemperatureForecastModel(TemperatureForecastModel):
     Forecast times are aware throughout and are converted to the node's zone. Values are degrees Fahrenheit; a record
     whose `temperatureUnit` is Celsius is converted.
 
-    Configuration: `weather_vip` (the weather agent's VIP identity, default `platform.weather`), `location` (one weather.gov location
-    dictionary, required: {"lat": .., "long": ..}, {"station": "KPSC"} or {"wfo": .., "x": .., "y": ..}),
-    `external_platform` (platform name when the weather agent runs elsewhere in the federation), `rpc_timeout`
-    (seconds), `temperature_point_name` (default `air_temperature`, the weather agent's standard name for NOAA's
-    `temperature`), `tmy_fallback_path` and `max_gap_time` as in the base class.
+    The configuration keys are the fields of Config: `weather_vip`, `location` (one weather.gov location dictionary,
+    required: {"lat": .., "long": ..}, {"station": "KPSC"} or {"wfo": .., "x": .., "y": ..}), `external_platform`,
+    `rpc_timeout`, `temperature_point_name` and the base class's `tmy_fallback_path` and `max_gap_time`;
+    `weather_file_path` is not accepted (a file-backed forecast is the base class).
     """
 
     MAX_FORECAST_HOURS = 156  # weather.gov's hourly forecast horizon
     RPC_METHOD = 'get_hourly_forecast'
 
-    def __init__(self,
-                 location: Mapping,
-                 weather_vip: str = 'platform.weather',
-                 external_platform: str = '',
-                 rpc_timeout: float = 15.0,
-                 temperature_point_name: str = 'air_temperature',
-                 *args, **kwargs):
-        if not weather_vip:
-            raise ValueError('weather_vip must name the weather agent\'s VIP identity (default platform.weather).')
-        if not isinstance(location, Mapping) or not location:
-            raise ValueError('WeatherDotGovTemperatureForecastModel requires location, a weather.gov location '
-                             f'dictionary such as {{"lat": 46.23, "long": -119.22}}; got {location!r}.')
-        if not temperature_point_name:
-            raise ValueError('temperature_point_name must name the temperature point in the forecast records.')
-        # weather_file_path stays None: the base class takes a file path to mean "forecast from the file, never from a
-        # service". The fallback file, if any, is tmy_fallback_path.
-        super(WeatherDotGovTemperatureForecastModel, self).__init__(location=dict(location),
-                                                                    temperature_point_name=temperature_point_name,
-                                                                    weather_file_path=None, *args, **kwargs)
-        self.weather_vip: str = str(weather_vip)
-        self.external_platform: str = str(external_platform) if external_platform else ''
-        self.rpc_timeout: float = float(rpc_timeout)
+    class Config(TemperatureForecastModel.Config):
+        weather_vip: str = Setting('platform.weather', min_length=1, reconfigurable=True,
+                                   description='VIP identity of the weather.gov agent.')
+        external_platform: str = Setting('', reconfigurable=True,
+                                         description='Platform the weather agent runs on when it is elsewhere in the '
+                                                     'federation; empty means the local platform.')
+        rpc_timeout: float = Setting(15.0, gt=0, reconfigurable=True, description='[s] wait for the forecast reply.')
+        location: dict[str, Any] = Setting(..., reconfigurable=True,
+                                           description='One weather.gov location: {"lat", "long"}, {"station"} or '
+                                                       '{"wfo", "x", "y"}.')
+        temperature_point_name: str = Setting('air_temperature', min_length=1, reconfigurable=True,
+                                              description='Temperature point in the forecast records (the weather '
+                                                          'agent\'s standard name for NOAA\'s temperature).')
+        weather_file_path: None = Setting(None, description='Not used: this forecast comes from the service; the file '
+                                                            'is tmy_fallback_path.')
+
+        @field_validator('location')
+        @classmethod
+        def _location_names_a_place(cls, value):
+            if not value:
+                raise ValueError('must name a location, such as {"lat": 46.23, "long": -119.22}')
+            return value
+
+    def __init__(self, transactive_node, config: ConfigModel | None = None, **kwargs):
+        cfg = self._configure(config, kwargs)
+        super(WeatherDotGovTemperatureForecastModel, self).__init__(transactive_node, config=cfg)
+        self.weather_vip: str = cfg.weather_vip
+        self.external_platform: str = cfg.external_platform
+        self.rpc_timeout: float = cfg.rpc_timeout
 
     def update_information(self, market):
         forecast = self.query_weather_data(self.forecast_hours_for(market))

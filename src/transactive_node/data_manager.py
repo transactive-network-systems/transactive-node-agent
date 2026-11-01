@@ -5,22 +5,23 @@ TENT itself knows nothing about VOLTTRON. Its components hand archive records to
 configured with; this one forwards them over the message bus to the transactive-node historian
 (volttron-transactive-node-historian), which owns the database. Two interactions:
 
-- At start-up (``init_archive``) the table definitions every configured component declared are sent to the historian
-  with the ``create_tables`` RPC, and the reply is waited for. Records queued before that moment are released once the
+- At start-up (``init_archive``) the table definitions every configured component declared are registered with the
+  historian, by the ``create_tables`` RPC or by a definitions publication (``registration``), and the reply is waited
+  for. Records queued before that moment are released once the
   historian has acknowledged the tables. The historian usually runs on another platform of the federation
   (``external_platform``), and a federation connection takes some time to come up after the platforms start, so an
   unanswered call is retried every ``rpc_retry_period`` seconds, each failure logged, until ``rpc_total_timeout``
   seconds have passed; then the error is raised rather than hidden: nothing would be archived in that run and the
   operator must know. An error reply (a rejected table definition) is raised at once; retrying cannot change it.
 - Every batch of records (``archive_data``) is published as a list of ``{"table_name": ..., "data": {...}}`` envelopes
-  on the agent's archive topic (``<db_topic>/<node name>/archive``), which the historian captures. Values are the
+  on the agent's archive topic (``<db_topic>/archive/<node name>/records``), which the historian captures. Values are the
   JSON forms ``tent.utils.helpers.json_encoder`` produces (UUIDs and enumeration names as strings, datetimes as ISO
   8601, durations as seconds); the historian's LocalDataManager parses them back by column type.
 
-Configuration (the ``data_manager`` block of the node config)::
+Configuration (the ``data_manager`` block of the node config; the keys are the fields of ``Config``)::
 
     {"class_name": "VolttronDataManager", "module_name": "transactive_node.data_manager",
-     "historian_vip": "tns.historian", "external_platform": "central", "rpc_timeout": 30}
+     "historian_vip": "tns.historian", "external_platform": "central", "registration": "pubsub"}
 
 ``historian_vip`` must be the VIP identity the historian is installed under; it has no default because the two sides
 have disagreed before and a silent mismatch simply archives nothing. ``external_platform`` is the instance name of the
@@ -28,28 +29,29 @@ platform the historian runs on, empty (the default) when it is the node's own pl
 """
 import logging
 import time
-from collections.abc import Mapping, Sequence
-
-import gevent
-
-from tent.data_manager import DataManager
-
-_log = logging.getLogger(__name__)
-
-
-class VolttronDataManager(DataManager):
-    ARCHIVE_KEY = 'archive'  # publish key the agent maps to its archive topic
-
-import logging
-import time
 
 from collections.abc import Mapping, Sequence
+from typing import Literal
 from uuid import uuid4
 
 import gevent
 from gevent.event import AsyncResult
 
+from tent.config import ConfigModel, Setting
 from tent.data_manager import ARCHIVE_SCHEMA_VERSION, DataManager
+
+from importlib.metadata import distribution, PackageNotFoundError
+try:
+    distribution('volttron-core')
+    from volttron.client.vip.agent import errors
+    from volttron.utils.jsonrpc import RemoteError
+except PackageNotFoundError:
+    from volttron.platform.jsonrpc import RemoteError
+    from volttron.platform.vip.agent import errors
+
+# What a registration attempt may fail with and be retried for: the historian unreachable or not answering. Any other
+# exception is a defect and propagates at once instead of being retried for rpc_total_timeout.
+TRANSPORT_ERRORS = (gevent.Timeout, TimeoutError, RemoteError, errors.VIPError)
 
 _log = logging.getLogger(__name__)
 
@@ -80,41 +82,51 @@ class VolttronDataManager(DataManager):
     per flush split into chunks of at most `max_batch_records` records, in order. A failed publish is logged and the
     records go back to the front of the queue for the next flush. stop() ends the flusher after a final flush.
     """
-
     ARCHIVE_KEY = 'archive'                      # publish key the agent maps to the node's records topic
     DEFINITIONS_KEY = 'archive_definitions'      # publish key for the registration request (pubsub path)
     STATUS_KEY = 'archive_status'                # subscribe key for the historian's answers (pubsub path)
-    REGISTRATION_PATHS = ('rpc', 'pubsub')
 
-    def __init__(self, parent, historian_vip: str, registration: str = 'rpc', external_platform: str = '',
-                 rpc_timeout: float = 30.0, rpc_retry_period: float = 10.0, rpc_total_timeout: float = 300.0,
-                 publish_interval: float = 1.0, max_batch_records: int = 1000, archive_key: str = ARCHIVE_KEY,
-                 *args, **kwargs):
-        # parent is the TransactiveNodeAgent (a VOLTTRON Agent). TransactiveNode passes it positionally and, like every
-        # other configured component, also passes the node as the keyword `transactive_node`; the base class accepts it.
-        super(VolttronDataManager, self).__init__(parent, *args, **kwargs)
-        if not historian_vip:
-            raise ValueError('VolttronDataManager requires historian_vip, the VIP identity of the TNS historian.')
-        if registration not in self.REGISTRATION_PATHS:
-            raise ValueError(f'VolttronDataManager registration must be one of {self.REGISTRATION_PATHS}, '
-                             f'not {registration!r}.')
-        self.historian_vip: str = historian_vip
-        self.registration: str = registration
-        self.external_platform: str = str(external_platform) if external_platform else ''
-        self.rpc_timeout: float = float(rpc_timeout)
-        self.rpc_retry_period: float = float(rpc_retry_period)
-        self.rpc_total_timeout: float = float(rpc_total_timeout)
-        self.publish_interval: float = float(publish_interval)
-        self.max_batch_records: int = int(max_batch_records)
-        if self.publish_interval <= 0 or self.max_batch_records < 1:
-            raise ValueError('publish_interval must be positive and max_batch_records at least 1.')
-        self.archive_key: str = archive_key
-        self._flusher = None          # greenlet publishing the queue every publish_interval once the archive is on
-        self._flusher_stopped = False
+    class Config(DataManager.Config):
+        historian_vip: str = Setting(..., min_length=1,
+                                     description='VIP identity of the transactive-node historian.')
+        registration: Literal['rpc', 'pubsub'] = Setting(
+            'rpc', description='How the table definitions are registered: the historian\'s create_tables RPC, or a '
+                               'definitions publication answered on the node\'s status topic (for a historian on '
+                               'another platform of a federation without cross-platform RPC).')
+        external_platform: str = Setting('', description='Platform the historian runs on, for the rpc path in a '
+                                                         'federation; empty means the local platform.')
+        rpc_timeout: float = Setting(30.0, gt=0, reconfigurable=True,
+                                     description='[s] wait for one answer (an RPC reply or a status message).')
+        rpc_retry_period: float = Setting(10.0, gt=0, reconfigurable=True,
+                                          description='[s] between registration attempts while unanswered.')
+        rpc_total_timeout: float = Setting(300.0, ge=0, reconfigurable=True,
+                                           description='[s] after which an unanswered registration is given up.')
+        publish_interval: float = Setting(1.0, gt=0, reconfigurable=True,
+                                          description='[s] between publications of the queued archive records.')
+        max_batch_records: int = Setting(1000, ge=1, reconfigurable=True,
+                                         description='Largest number of records in one archive message.')
+        archive_key: str = Setting('archive', min_length=1,
+                                   description='Publish key the records go out under (the agent maps it to a topic).')
+
+    def __init__(self, parent, config: ConfigModel | None = None, **kwargs):
+        # parent is the TransactiveNodeAgent (a VOLTTRON Agent); the node passes itself positionally.
+        cfg = self._configure(config, kwargs)
+        super(VolttronDataManager, self).__init__(parent, config=cfg)
+        self.historian_vip: str = cfg.historian_vip
+        self.registration: str = cfg.registration
+        self.external_platform: str = cfg.external_platform
+        self.rpc_timeout: float = cfg.rpc_timeout
+        self.rpc_retry_period: float = cfg.rpc_retry_period
+        self.rpc_total_timeout: float = cfg.rpc_total_timeout
+        self.publish_interval: float = cfg.publish_interval
+        self.max_batch_records: int = cfg.max_batch_records
+        self.archive_key: str = cfg.archive_key
         self.rejected_tables: dict[str, Mapping] = {}   # table name -> {"message", "differences"} from the historian
         self._dropped_tables_reported: set[str] = set()
         self._pending_request_id: str | None = None
         self._pending_reply: AsyncResult | None = None
+        self._flusher = None          # greenlet publishing the queue every publish_interval once the archive is on
+        self._flusher_stopped = False
 
     @property
     def historian_address(self) -> str:
@@ -142,7 +154,7 @@ class VolttronDataManager(DataManager):
                     reply = self._call_historian('create_tables', {'definitions': definitions,
                                                                    'schema_version': ARCHIVE_SCHEMA_VERSION})
                 break
-            except Exception as error:  # unreachable peer, no federation route yet, or no reply in time
+            except TRANSPORT_ERRORS as error:  # unreachable peer, no federation route yet, or no reply in time
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise RuntimeError(f'Historian {self.historian_address!r} did not answer the table registration in '

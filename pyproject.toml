@@ -5,6 +5,14 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 volttron-transactive-node = "transactive_node.agent:main"
 
+# TENT resolves these class names without module_name once this package is installed (tent.registry entry points).
+[tool.poetry.plugins."tent.components"]
+VolttronDataManager = "transactive_node.data_manager:VolttronDataManager"
+TNSMeterPoint = "transactive_node.tns_meter_point:TNSMeterPoint"
+WeatherDotGovTemperatureForecastModel = "transactive_node.weather_dot_gov_temperature_forecast_model:WeatherDotGovTemperatureForecastModel"
+TNSDirectRatioActuationManager = "transactive_node.local_asset.actuation_manager.tns_direct_ratio:TNSDirectRatioActuationManager"
+ILCActuationManager = "transactive_node.local_asset.actuation_manager.ilc:ILCActuationManager"
+
 [tool.isort]
 profile = "black"
 

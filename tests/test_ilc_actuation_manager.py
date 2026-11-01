@@ -58,3 +58,12 @@ def test_publish_failure_is_logged_as_an_error_with_traceback(node, caplog):
         manager.set_target(1.0, start, start + timedelta(hours=1))
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1 and errors[0].exc_info is not None and 'record/target_agent' in errors[0].getMessage()
+
+
+def test_the_target_topic_is_not_reconfigurable_and_unknown_keys_are_errors(node):
+    from tent.config import ConfigurationError, ReconfigurationError
+    manager = make_manager(node)
+    with pytest.raises(ReconfigurationError):
+        manager.reconfigure({'ilc_target_topic': 'record/other'})
+    with pytest.raises(ConfigurationError, match="unknown configuration key 'ilc_topic'"):
+        ILCActuationManager(ilc_topic='record/x', transactive_node=node, parent=Parent(), occupancy_manager=Occupancy())

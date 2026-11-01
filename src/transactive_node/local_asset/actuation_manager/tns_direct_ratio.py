@@ -43,6 +43,7 @@ under Contract DE-AC05-76RL01830
 import gevent
 import logging
 
+from tent.config import ConfigModel, Setting
 from tent.utils.log import setup_logging
 from tent.local_asset.actuation_manager.direct_ratio import DirectRatioActuationManager
 
@@ -68,12 +69,18 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
     failed write; `revert_point(path, point_name)`, which returns 'SUCCESS' or 'FAILURE'.
     """
 
-    def __init__(self, actuator_identity: str, rpc_timeout: float = 15.0, **kwargs):
-        if not actuator_identity:
-            raise ValueError('TNSDirectRatioActuationManager requires actuator_identity, the actuator agent\'s VIP identity.')
-        super(TNSDirectRatioActuationManager, self).__init__(**kwargs)
-        self.actuator_identity = str(actuator_identity)
-        self.rpc_timeout = float(rpc_timeout)
+    class Config(DirectRatioActuationManager.Config):
+        actuator_identity: str = Setting(..., min_length=1, reconfigurable=True,
+                                         description='VIP identity of the agent answering set_point and revert_point.')
+        rpc_timeout: float = Setting(15.0, gt=0, reconfigurable=True, description='[s] wait for an RPC reply.')
+
+    def __init__(self, parent=None, occupancy_manager=None, transactive_node=None, config: ConfigModel | None = None,
+                 **kwargs):
+        cfg = self._configure(config, kwargs)
+        super(TNSDirectRatioActuationManager, self).__init__(parent=parent, occupancy_manager=occupancy_manager,
+                                                             transactive_node=transactive_node, config=cfg)
+        self.actuator_identity: str = cfg.actuator_identity
+        self.rpc_timeout: float = cfg.rpc_timeout
 
     @staticmethod
     def split_point(target_id: str) -> tuple[str, str]:

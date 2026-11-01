@@ -94,10 +94,28 @@ def test_requires_a_historian_identity():
         VolttronDataManager(FakeAgent(), historian_vip='')
 
 
-def test_accepts_the_node_keyword_the_configuration_path_passes():
+def test_configuration_is_validated_by_the_config_model():
+    from tent.config import ConfigurationError
     agent = FakeAgent()
-    dm = VolttronDataManager(agent, historian_vip='platform.historian', transactive_node=agent)
-    assert dm.historian_vip == 'platform.historian' and dm.archive_key == 'archive'
+    dm = VolttronDataManager(agent, historian_vip='platform.historian')
+    assert dm.historian_vip == 'platform.historian' and dm.archive_key == 'archive' and dm.config_version == 1
+    assert dm.config.model_dump()['registration'] == 'rpc'
+    with pytest.raises(ConfigurationError, match="VolttronDataManager: unknown configuration key 'transactive_node'"):
+        VolttronDataManager(agent, historian_vip='platform.historian', transactive_node=agent)
+    assert VolttronDataManager.Config.reconfigurable_fields() == {'rpc_timeout', 'rpc_retry_period',
+                                                                  'rpc_total_timeout', 'publish_interval',
+                                                                  'max_batch_records'}
+
+
+def test_timeouts_are_reconfigurable_in_place_and_the_registration_path_is_not():
+    from tent.config import ReconfigurationError
+    agent = FakeAgent()
+    dm = ready_dm(agent, publish_interval=1.0)
+    dm.reconfigure({'publish_interval': 2.5, 'rpc_timeout': 3.0})
+    assert (dm.publish_interval, dm.rpc_timeout, dm.config_version) == (2.5, 3.0, 2)
+    with pytest.raises(ReconfigurationError):
+        dm.reconfigure({'registration': 'pubsub'})
+    assert dm.registration == 'rpc'
 
 
 def test_records_queue_until_tables_are_registered_then_publish_as_one_batch():

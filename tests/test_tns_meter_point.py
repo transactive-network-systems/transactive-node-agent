@@ -2,11 +2,13 @@
 import logging
 from datetime import datetime, timezone
 
+import pytest
+
 from transactive_node.tns_meter_point import TNSMeterPoint
 
 
 def make_meter(node):
-    return TNSMeterPoint(subscribe_key='METERS', point_name='WholeBuildingPower', external_platform=False,
+    return TNSMeterPoint(subscribe_key='METERS', point_name='WholeBuildingPower',
                          transactive_node=node, name='Meter', measurement_type='AverageDemandkW',
                          measurement_unit='kWh')
 
@@ -49,3 +51,13 @@ def test_simulation_stamps_readings_with_the_simulated_clock(simulated_node, fix
     meter = make_meter(simulated_node)
     meter.handle_subscription(datetime(2026, 1, 1, tzinfo=timezone.utc), 'METERS', {'WholeBuildingPower': 2.5})
     assert meter.last_updated == fixed_now and meter.current_measurement == 2.5
+
+
+def test_unknown_keys_and_a_missing_point_name_are_configuration_errors(node):
+    from tent.config import ConfigurationError
+    with pytest.raises(ConfigurationError, match="TNSMeterPoint 'Meter': unknown configuration key 'external_platform'"):
+        TNSMeterPoint(transactive_node=node, name='Meter', subscribe_key='METERS', point_name='P',
+                      external_platform=False)
+    with pytest.raises(ConfigurationError, match='point_name is required'):
+        TNSMeterPoint(transactive_node=node, name='Meter', subscribe_key='METERS')
+    assert node.subscriptions == {}, 'nothing was subscribed for a rejected configuration'

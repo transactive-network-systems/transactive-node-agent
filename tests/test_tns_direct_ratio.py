@@ -70,3 +70,16 @@ def test_remote_failure_is_logged_at_error_with_the_actuators_reply(node, caplog
     messages = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
     assert len(messages) == 2 and all('Failed to find a known topic' in m for m in messages)
     assert 'Failed to set' in messages[0] and 'Failed to revert' in messages[1]
+
+
+def test_actuator_identity_and_timeout_are_reconfigurable_in_place(node):
+    from tent.config import ConfigurationError, ReconfigurationError
+    manager = make_manager(node)
+    manager.reconfigure({'actuator_identity': 'energyplus.actuator', 'rpc_timeout': 3.0})
+    node.vip.rpc.reply = 1.0
+    manager.direct_actuate(KEY, 1.0)
+    assert node.vip.rpc.calls[0][0] == 'energyplus.actuator' and node.vip.rpc.calls[0][2][2] == 1.0
+    with pytest.raises(ReconfigurationError):
+        manager.reconfigure({'control_interval': 5})
+    with pytest.raises(ConfigurationError, match="unknown configuration key 'actuator'"):
+        make_manager(node, actuator='platform.actuator')

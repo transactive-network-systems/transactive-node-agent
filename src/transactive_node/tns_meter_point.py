@@ -3,8 +3,8 @@ import logging
 from collections.abc import Mapping
 from datetime import datetime
 
+from tent.config import ConfigModel, Setting
 from tent.meter_point.push_meter_point import PushMeterPoint
-from tent.utils.helpers import validate_bool
 
 _log = logging.getLogger(__name__)
 
@@ -12,11 +12,15 @@ _log = logging.getLogger(__name__)
 class TNSMeterPoint(PushMeterPoint):
     """A meter point fed by a VOLTTRON device publication: one named point out of the published all-points mapping."""
 
-    def __init__(self, subscribe_key: str, point_name: str, external_platform: bool, *args, **kwargs):
-        # subscribe_key should be a string which is mapped to a topic in the TNS agent configuration "topics" dict.
-        self.point_name = str(point_name)
-        self.external_platform = validate_bool(external_platform, 'external_platform')
-        super().__init__(subscribe_key=subscribe_key, *args, **kwargs)
+    class Config(PushMeterPoint.Config):
+        point_name: str = Setting(..., min_length=1,
+                                  description='Name of the point read out of the device publication\'s all-points '
+                                              'message.')
+
+    def __init__(self, transactive_node, config: ConfigModel | None = None, **kwargs):
+        cfg = self._configure(config, kwargs)
+        super().__init__(transactive_node, config=cfg)
+        self.point_name: str = cfg.point_name
 
     def handle_subscription(self, time_received: datetime, subscribe_key: str, message: Mapping):
         if subscribe_key != self.subscribe_key:

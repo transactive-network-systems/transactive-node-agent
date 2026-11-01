@@ -29,7 +29,13 @@ Python 3.11 or newer. Dependencies are declared in `pyproject.toml`.
 ## Configuration
 
 The agent reads one configuration-store entry, `config`. It is a JSON object with the agent's own keys, TENT's node
-keys and the component lists. The files in `sample_config/` are the four node configurations the container deployment
+keys and the component lists. Every block is validated through TENT's configuration models before anything is built
+(see TENT's `docs/source/design/configuration_models.rst`): each class below declares a nested `Config` whose fields
+are its keys, with types, bounds, defaults and descriptions; an unknown key, a missing required key or a value out of
+range is a `ConfigurationError` naming the component and the key, and the running node is left as it was. The
+reconfigurable fields (timeouts, the weather and actuator identities, the weather location, the batch settings) can be
+changed on a running node; everything else (identities of the historian, the registration path, topics, keys) rebuilds
+it. The files in `sample_config/` are the four node configurations the container deployment
 runs; `sample_config/weather_dot_gov_temperature_forecast_model.json` is one `information_service_models` entry.
 
 ### Agent keys
@@ -131,7 +137,7 @@ class's constructor; `market_series` entries also carry `market_class_name` and 
 TENT classes are documented in TENT; the agent's own components take:
 
 - `TNSMeterPoint`: `subscribe_key` (a key of `topics`), `point_name` (the point to read out of the device message),
-  `external_platform`, plus TENT's `MeterPoint` keys (`measurement_type`, `measurement_unit`, `measurement_interval`,
+  plus TENT's `MeterPoint` keys (`measurement_type`, `measurement_unit`, `measurement_interval`,
   `data_period_seconds`, `max_buffer_seconds`, `scale_factor`). A value of `0.0` is a reading; a message that is not a
   mapping or has no such point is logged and ignored.
 - `WeatherDotGovTemperatureForecastModel`: `weather_vip` (the weather agent's identity, default `platform.weather`), `location` (one
@@ -151,9 +157,12 @@ TENT classes are documented in TENT; the agent's own components take:
 
 ### Applying a changed configuration
 
-Storing a new `config` (an UPDATE) rebuilds the node: the state-machine greenlet is stopped, every subscription of the
-previous configuration is removed, all components are dropped, and the node is built again from the new contents.
-When the simulation settings (`simulation`, `simulation_start_time`, `simulation_one_hour_in_seconds`,
+Storing a new `config` (an UPDATE) is validated first; a rejected configuration is logged and the running node is not
+touched. The running node is then asked to take the new configuration in place (TENT's `reconfigure`): when it differs
+from the current one only in reconfigurable fields of existing components, each component applies its changes and
+archives a new configuration version, and nothing else happens. Otherwise the node is rebuilt: the state-machine
+greenlet is stopped, every subscription of the previous configuration is removed, all components are dropped, and the
+node is built again from the new contents. When the simulation settings (`simulation`, `simulation_start_time`, `simulation_one_hour_in_seconds`,
 `simulation_anchor_time`, compared as configured) are unchanged, the rebuilt node continues the same run: it keeps its
 identity and creation time, its archive row is appended as a new version, and the simulated clock keeps its anchor.
 When they changed, the rebuilt node is a new run with a new identity, and without an anchor its simulated clock is
