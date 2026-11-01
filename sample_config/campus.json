@@ -744,7 +744,7 @@
       "name": "Real-Time_Auction",
       "method": "Interpolation",
       "price_model": null,
-      "refined_series": null
+      "refined_series": "Day-Ahead_Auction"
     }
   ],
   "neighbors": [
