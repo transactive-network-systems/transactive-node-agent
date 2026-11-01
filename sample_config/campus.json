@@ -656,7 +656,7 @@
       ],
       "location": "",
       "maximum_power": 0.0,
-      "minimum_power": -16400.0,
+      "minimum_power": -24200.0,
       "meter_points": null,
       "name": "InelasticBuildings"
     },

@@ -35,8 +35,8 @@
       "information_services": [
         "TemperatureForecast"
       ],
-      "maximum_power": -50000,
-      "minimum_power": -200000,
+      "maximum_power": 0.0,
+      "minimum_power": -219100.0,
       "name": "InelasticCityLoad",
       "dow_intercept": [
         144786,
