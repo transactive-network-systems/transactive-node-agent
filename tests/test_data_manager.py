@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from transactive_node.data_manager import VolttronDataManager
+from tent.data_manager import ARCHIVE_SCHEMA_VERSION
 
 
 class FakeResult:
@@ -111,7 +112,8 @@ def test_records_queue_until_tables_are_registered_then_publish_as_one_batch():
 
     peer, method, args, _ = agent.vip.rpc.calls[0]
     assert (peer, method) == ('platform.historian', 'create_tables')
-    assert args[0] == [DEFINITION], 'the table definitions, as a list'
+    assert args[0] == {'definitions': [DEFINITION], 'schema_version': ARCHIVE_SCHEMA_VERSION}, \
+        'the table definitions beside this TENT\'s archive schema version'
     assert dm.archive_ready
     assert len(agent.published) == 1
     key, batch = agent.published[0]
@@ -250,6 +252,34 @@ def test_rpc_error_reply_raises_with_the_details():
     assert not dm.archive_ready and agent.published == []
 
 
+def test_schema_version_refusal_raises_naming_both_versions():
+    """What the historian answers when this node's TENT writes another archive schema version than its own."""
+    refusal = {'status': 'error', 'registered_tables': [], 'rejected_tables': {},
+               'message': f'The node states archive schema version {ARCHIVE_SCHEMA_VERSION}; this historian\'s TENT '
+                          f'writes archive schema version {ARCHIVE_SCHEMA_VERSION + 1}. Nothing was registered.',
+               'schema_version': ARCHIVE_SCHEMA_VERSION + 1}
+    agent = FakeAgent(reply=refusal)
+    dm = VolttronDataManager(agent, historian_vip='tns.historian')
+    dm.add_tables([DEFINITION])
+    dm.archive_data(record('test_table', 'a'))
+    with pytest.raises(RuntimeError) as error:
+        dm.init_archive()
+    message = str(error.value)
+    assert f'version {ARCHIVE_SCHEMA_VERSION + 1}' in message and f'version {ARCHIVE_SCHEMA_VERSION}' in message
+    assert 'Nothing was registered' in message
+    assert not dm.archive_ready and agent.published == []
+
+
+def test_historians_schema_version_is_logged_on_success(caplog):
+    agent = FakeAgent(reply={'status': 'success', 'registered_tables': ['test_table'], 'rejected_tables': {},
+                             'message': '', 'schema_version': ARCHIVE_SCHEMA_VERSION})
+    dm = VolttronDataManager(agent, historian_vip='tns.historian')
+    dm.add_tables([DEFINITION])
+    with caplog.at_level(logging.INFO, logger='transactive_node.data_manager'):
+        dm.init_archive()
+    assert any(f'writes archive schema version {ARCHIVE_SCHEMA_VERSION}' in r.getMessage() for r in caplog.records)
+
+
 def test_only_records_without_rejected_tables_are_published_when_a_batch_is_all_rejected():
     agent = FakeAgent(reply=partial_for({'request_id': None, 'node': 'Campus', 'definitions': []}))
     dm = VolttronDataManager(agent, historian_vip='tns.historian')
@@ -281,6 +311,7 @@ def test_pubsub_success_subscribes_everywhere_publishes_definitions_and_flushes(
     assert agent.vip.rpc.calls == [], 'no RPC on the pubsub path'
     (request,) = agent.definitions_published()
     assert request['node'] == 'Campus' and request['definitions'] == [DEFINITION, OTHER]
+    assert request['schema_version'] == ARCHIVE_SCHEMA_VERSION
     uuid.UUID(request['request_id'], version=4)
     assert dm.archive_ready and agent.records_published() == [[record('test_table', 'a')]]
     assert dm.pending_request_id is None

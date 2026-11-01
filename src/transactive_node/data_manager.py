@@ -49,7 +49,7 @@ from uuid import uuid4
 import gevent
 from gevent.event import AsyncResult
 
-from tent.data_manager import DataManager
+from tent.data_manager import ARCHIVE_SCHEMA_VERSION, DataManager
 
 _log = logging.getLogger(__name__)
 
@@ -57,20 +57,23 @@ _log = logging.getLogger(__name__)
 class VolttronDataManager(DataManager):
     """Archives through the transactive-node historian on the message bus.
 
-    Before anything is archived the node's table definitions are registered with the historian, by one of two paths
-    selected with `registration`:
+    Before anything is archived the node's table definitions are registered with the historian, together with this
+    TENT's archive schema version (tent.data_manager.ARCHIVE_SCHEMA_VERSION), by one of two paths selected with
+    `registration`:
 
-    - "rpc" (default): the historian's `create_tables` RPC, addressed with `external_platform` when the historian runs
-      on another platform. The call is retried every `rpc_retry_period` seconds until it is answered or
-      `rpc_total_timeout` has passed.
+    - "rpc" (default): the historian's `create_tables` RPC with `{"definitions": [...], "schema_version": N}`,
+      addressed with `external_platform` when the historian runs on another platform. The call is retried every
+      `rpc_retry_period` seconds until it is answered or `rpc_total_timeout` has passed.
     - "pubsub": for federations without cross-platform RPC. The definitions are published on the agent's
-      `archive_definitions` key with a request id; the historian answers on the node's status topic (the agent's
-      `archive_status` key, subscribed on all platforms) and the answer carrying that request id is awaited for
-      `rpc_timeout` seconds. Without an answer the request is published again with a new id every `rpc_retry_period`
-      seconds, and given up after `rpc_total_timeout`.
+      `archive_definitions` key as `{"node", "request_id", "definitions", "schema_version"}`; the historian answers on
+      the node's status topic (the agent's `archive_status` key, subscribed on all platforms) and the answer carrying
+      that request id is awaited for `rpc_timeout` seconds. Without an answer the request is published again with a
+      new id every `rpc_retry_period` seconds, and given up after `rpc_total_timeout`.
 
     Both paths yield the same reply: status "success" (archive on), "partial" (archive on; records for the rejected
-    tables are dropped, each table reported once) or "error" (raised; nothing is archived).
+    tables are dropped, each table reported once) or "error" (raised; nothing is archived). The historian refuses a
+    node whose archive schema version is not its own TENT's with an "error" naming both versions; the reply carries
+    the historian's version as `schema_version`, which is logged.
 
     Records are never published one by one: archive_data only queues them. Once the archive is on, the start-up backlog
     is published and a flusher greenlet publishes whatever has queued every `publish_interval` seconds, as one message
@@ -136,7 +139,8 @@ class VolttronDataManager(DataManager):
                 if self.registration == 'pubsub':
                     reply = self._request_registration_by_pubsub(definitions)
                 else:
-                    reply = self._call_historian('create_tables', definitions)
+                    reply = self._call_historian('create_tables', {'definitions': definitions,
+                                                                   'schema_version': ARCHIVE_SCHEMA_VERSION})
                 break
             except Exception as error:  # unreachable peer, no federation route yet, or no reply in time
                 remaining = deadline - time.monotonic()
@@ -158,7 +162,8 @@ class VolttronDataManager(DataManager):
         self._pending_request_id = request_id
         self._pending_reply = AsyncResult()
         self.parent.publish(self.DEFINITIONS_KEY, message={'node': self.parent.name, 'request_id': request_id,
-                                                           'definitions': definitions})
+                                                           'definitions': definitions,
+                                                           'schema_version': ARCHIVE_SCHEMA_VERSION})
         try:
             return self._pending_reply.get(timeout=self.rpc_timeout)
         except gevent.Timeout:
@@ -188,6 +193,9 @@ class VolttronDataManager(DataManager):
                                f'{reply!r}, not a status mapping.')
         status = reply.get('status')
         rejected = reply.get('rejected_tables') or {}
+        if status in ('success', 'partial'):
+            _log.info(f'Historian {self.historian_address!r} writes archive schema version '
+                      f'{reply.get("schema_version")!r}; this node writes version {ARCHIVE_SCHEMA_VERSION}.')
         if status == 'success':
             _log.info(f'Historian {self.historian_address!r} registered the archive tables after {attempts} attempt(s).')
         elif status == 'partial':
@@ -200,8 +208,10 @@ class VolttronDataManager(DataManager):
             _log.warning(f'Historian {self.historian_address!r} registered the archive tables except '
                          f'{sorted(self.rejected_tables)} after {attempts} attempt(s).')
         elif status == 'error':
+            # Includes the historian refusing this node's archive schema version; its message names both versions.
             raise RuntimeError(f'Historian {self.historian_address!r} did not register the archive tables: '
-                               f'{reply.get("message")!r}; rejected tables: {dict(rejected)!r}')
+                               f'{reply.get("message")!r}; rejected tables: {dict(rejected)!r}; historian archive '
+                               f'schema version {reply.get("schema_version")!r}, this node\'s {ARCHIVE_SCHEMA_VERSION}')
         else:
             raise RuntimeError(f'Historian {self.historian_address!r} answered the table registration with an unknown '
                                f'status {status!r}: {reply!r}')

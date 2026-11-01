@@ -82,10 +82,10 @@ The archive. The deployment uses `VolttronDataManager`:
 
 Registration paths:
 
-- `rpc`: the historian's `create_tables` RPC is called with the list of definitions and returns the status mapping
-  below. The call is repeated every `rpc_retry_period` seconds until it is answered, for at most `rpc_total_timeout`.
-- `pubsub`: the node subscribes to its status topic on all platforms, publishes the definitions on its definitions
-  topic with a fresh `request_id`, and waits `rpc_timeout` seconds for the status carrying that id. Without an answer
+- `rpc`: the historian's `create_tables` RPC is called with `{"definitions": [...], "schema_version": N}`, the list
+  of definitions beside this TENT's `tent.data_manager.ARCHIVE_SCHEMA_VERSION`, and returns the status mapping below. The call is repeated every `rpc_retry_period` seconds until it is answered, for at most `rpc_total_timeout`.
+- `pubsub`: the node subscribes to its status topic on all platforms, publishes the definitions (with the same
+  `schema_version`) on its definitions topic with a fresh `request_id`, and waits `rpc_timeout` seconds for the status carrying that id. Without an answer
   it logs an error and publishes again with a new id every `rpc_retry_period` seconds, giving up after
   `rpc_total_timeout`. Status messages for other request ids are logged at debug level and ignored.
 
@@ -98,9 +98,14 @@ The status mapping (the RPC reply and the status message are the same shape):
   "status": "success | partial | error",
   "registered_tables": ["transactive_node", "market"],
   "rejected_tables": {"meter_point": {"message": "definition differs from the stored one", "differences": "..."}},
-  "message": "free text"
+  "message": "free text",
+  "schema_version": 2
 }
 ```
+
+`schema_version` is the archive schema version the historian's TENT writes; it is logged beside this node's. A
+historian whose version differs refuses the registration with `error` and a message naming both versions, so the
+node does not start archiving; the two TENT installations must be of the same archive schema version.
 
 Records are not published one at a time. They are queued and published in batches: the backlog once registration
 succeeds, then everything queued every `publish_interval` seconds, in messages of at most `max_batch_records` records.
@@ -169,7 +174,7 @@ With `db_topic` D, node name N and a neighbor named B:
 | Topic | Direction | Content |
 |---|---|---|
 | `D/archive/N/records` | published | Batches of archive records (`{"table_name", "data"}` envelopes) for the historian. |
-| `D/archive/N/definitions` | published | Registration request on the `pubsub` path: `{"node", "request_id", "definitions"}`. |
+| `D/archive/N/definitions` | published | Registration request on the `pubsub` path: `{"node", "request_id", "definitions", "schema_version"}`. |
 | `D/archive/N/status` | subscribed, all platforms | The historian's answer to a registration request (status mapping above). |
 | `D/N/B` | published | Transactive signals from this node to neighbor B. |
 | `D/B/N` | subscribed | Transactive signals from neighbor B to this node. |
