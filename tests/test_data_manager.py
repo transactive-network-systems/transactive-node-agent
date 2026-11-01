@@ -461,3 +461,21 @@ def test_stop_kills_the_flusher_and_flushes_once_more():
     assert flusher.dead and dm._flusher is None and dm._flusher_stopped
     assert agent.records_published() == [[record('test_table', 'late')]]
     dm.stop()  # idempotent
+
+
+def test_unserialisable_records_are_dropped_not_requeued(caplog):
+    agent = FakeAgent()
+    dm = ready_dm(agent, max_batch_records=2)
+
+    def publish(publish_key, message, date_time=None):
+        if any(r['data']['id'] == 'bad' for r in message):
+            raise ValueError('Out of range float values are not JSON compliant')
+        agent.published.append((publish_key, message))
+    agent.publish = publish
+    dm.archive_data([record('test_table', 'a'), record('test_table', 'bad'), record('test_table', 'c')])
+    with caplog.at_level(logging.ERROR, logger='transactive_node.data_manager'):
+        dm.flush()
+    assert agent.records_published() == [[record('test_table', 'c')]], 'the bad chunk is dropped, the rest goes out'
+    assert len(dm.archival_queue) == 0
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and errors[0].exc_info is not None and 'dropped' in errors[0].getMessage()

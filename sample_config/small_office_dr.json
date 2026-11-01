@@ -142,7 +142,7 @@
         "demand_curve_points": 2,
         "models": [
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP1",
             "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -256,7 +256,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP2",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -370,7 +370,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP3",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -484,7 +484,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP4",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -598,7 +598,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP5",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -712,7 +712,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP6",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -826,7 +826,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP7",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -940,7 +940,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP8",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -1054,7 +1054,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP9",
               "model_config": {
 		  "max_set_point_offset": 1.0,
@@ -1168,7 +1168,7 @@
             }
           },
           {
-            "model_type": "thermostat.Thermostat",
+            "class_name": "Thermostat",
             "subscribe_key": "HP10",
               "model_config": {
 		  "max_set_point_offset": 1.0,              
@@ -1282,7 +1282,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "GS1",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/GS1/DimmingLevelOutput",
@@ -1316,7 +1316,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "GE2",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/GE2/DimmingLevelOutput",
@@ -1350,7 +1350,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "GN3",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/GN3/DimmingLevelOutput",
@@ -1384,7 +1384,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "GW4",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/GW4/DimmingLevelOutput",
@@ -1418,7 +1418,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "GC5",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/GC5/DimmingLevelOutput",
@@ -1452,7 +1452,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "TS11",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/TS11/DimmingLevelOutput",
@@ -1486,7 +1486,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "TE12",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/TE12/DimmingLevelOutput",
@@ -1520,7 +1520,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "TN13",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/TN13/DimmingLevelOutput",
@@ -1554,7 +1554,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "TW14",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/TW14/DimmingLevelOutput",
@@ -1588,7 +1588,7 @@
             }
           },
           {
-            "model_type": "light.Lighting",
+            "class_name": "Lighting",
             "subscribe_key": "TC15",
             "model_config": {
               "actuation_key": "Campus/SMALL_OFFICE_DR/LIGHTING/TC15/DimmingLevelOutput",
@@ -1622,7 +1622,7 @@
             }
           },
 	    {
-            "model_type": "uncontrolled.UncontrolledLoad",
+            "class_name": "UncontrolledLoad",
             "subscribe_key": "Uncontrolled",
             "model_config": {
 		"uncontrolled_load_schedule": [

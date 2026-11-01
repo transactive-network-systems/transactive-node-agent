@@ -85,3 +85,28 @@ def test_unknown_key_is_not_subscribed(agent, caplog):
         agent.register_subscription('NOPE', Recorder())
     assert agent.vip.pubsub.subscriptions == [] and agent._subscriptions == []
     assert any('NOPE' in r.getMessage() for r in caplog.records)
+
+
+def test_publish_refuses_non_finite_numbers_and_issue_signal_logs_it(agent, caplog):
+    agent.topics['CoR_outgoing_transactive_signal'] = 'tns/Campus/CoR'
+    with pytest.raises(ValueError):
+        agent.publish('SIG', {'price': float('inf')})
+    with pytest.raises(ValueError):
+        agent.publish('SIG', [{'q': float('nan')}])
+    assert agent.vip.pubsub.published == []
+    with caplog.at_level(logging.ERROR, logger='transactive_node.agent'):
+        agent.issue_signal('CoR', {'intervals': [{'price': float('inf')}]})
+    assert agent.vip.pubsub.published == []
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and errors[0].exc_info is not None and 'CoR' in errors[0].getMessage()
+
+
+def test_publish_encodes_tent_value_types_as_json(agent):
+    from datetime import timedelta
+    from uuid import uuid4
+    ident = uuid4()
+    agent.publish('SIG', {'id': ident, 'at': datetime(2026, 10, 31, tzinfo=timezone.utc), 'for': timedelta(hours=1),
+                          'price': None})
+    topic, headers, message = agent.vip.pubsub.published[0]
+    assert topic == 'tns/CoR/Campus' and set(headers) == {'Date', 'TimeStamp'}
+    assert message == {'id': str(ident), 'at': '2026-10-31T00:00:00+00:00', 'for': 3600.0, 'price': None}

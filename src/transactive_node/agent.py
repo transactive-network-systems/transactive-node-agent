@@ -53,7 +53,7 @@ from typing import Callable
 from uuid import UUID
 
 from tent.transactive_node import TransactiveNode
-from tent.utils.helpers import json_encoder, require_aware
+from tent.utils.helpers import json_dumps, require_aware
 from tent.utils.timer import Timer
 from transactive_node.data_manager import VolttronDataManager
 
@@ -145,8 +145,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         NEW, the node is a new run.
         """
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
-        # TENT's configure consumes the dicts it is given (class_name and module_name are popped out of each component
-        # configuration), so work on a copy: the config store hands over the same contents again on a later UPDATE.
+        # Work on a copy: the config store hands over the same object again on a later UPDATE, and the anchor inserted
+        # below must not leak into it.
         contents = deepcopy(contents)
         self._apply_environment_anchor(contents)
         simulation_settings = {key: contents.get(key) for key in self.SIMULATION_KEYS}
@@ -215,10 +215,12 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self._state_machine_greenlet = None
 
     def publish(self, publish_key, message, date_time=None):
+        """Publish `message` on the topic mapped to `publish_key`. The message is serialised with TENT's encoder and
+        standard JSON only: a NaN or infinite number raises ValueError here, so nothing non-JSON leaves the agent."""
         date_time = date_time if date_time else Timer.now()
         # DATE is what the base historian reads for record capture; TIMESTAMP is what TENT subscriptions read.
         headers = {headers_mod.DATE: date_time.isoformat(), headers_mod.TIMESTAMP: date_time.isoformat()}
-        msg = json.loads(json.dumps(message, default=json_encoder))
+        msg = json.loads(json_dumps(message))
         publish_topic = self.topics.get(publish_key)
         if publish_topic:
             if publish_topic == 'IGNORE':
@@ -229,10 +231,9 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
     def issue_signal(self, recipient: str, signal_dict: dict):
         try:
-            serialized_message = json.loads(json.dumps(signal_dict))
-            self.publish(f'{recipient}_outgoing_transactive_signal', message=serialized_message)
-        except (TypeError, ValueError) as e:
-            _log.warning(f'Failed to serialize outgoing signal to {recipient}: {signal_dict} with error: {e}')
+            self.publish(f'{recipient}_outgoing_transactive_signal', message=signal_dict)
+        except (TypeError, ValueError):
+            _log.exception(f'Outgoing signal to {recipient} cannot be serialised and was not sent: {signal_dict}')
 
     def register_subscription(self, subscribe_key, callback, all_platforms: bool | None = None):
         """Subscribe the callback to the topic the configuration maps `subscribe_key` to.

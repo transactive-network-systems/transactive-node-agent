@@ -242,6 +242,11 @@ class VolttronDataManager(DataManager):
             chunk = pending[start:start + self.max_batch_records]
             try:
                 self.parent.publish(self.archive_key, message=chunk)
+            except (TypeError, ValueError):
+                # A record that cannot be serialised (a NaN or infinite number, an unknown type) would fail on every
+                # flush; requeueing it would stop the archive for good. Drop the chunk and go on.
+                _log.exception(f'{len(chunk)} archive records cannot be serialised and are dropped: '
+                               f'{sorted({r.get("table_name") for r in chunk if isinstance(r, Mapping)})}')
             except Exception:
                 _log.exception(f'Publishing {len(chunk)} archive records failed; they are requeued for the next flush.')
                 self.archival_queue.extendleft(reversed(pending[start:]))

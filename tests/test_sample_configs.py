@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from tent.utils.helpers import get_class_from_spec
+from tent.information_service_model import InformationServiceModel
+from tent.utils.helpers import get_class_from_spec, spec_kwargs
 from transactive_node.agent import TransactiveNodeAgent
 
 SAMPLES = Path(__file__).resolve().parent.parent / 'sample_config'
@@ -39,6 +40,6 @@ def test_node_sample_configures_an_agent(path):
 @pytest.mark.parametrize('path', COMPONENT_SAMPLES, ids=lambda p: p.stem)
 def test_component_sample_constructs(path, node):
     spec = json.loads(path.read_text())
-    component_class = get_class_from_spec(spec, default_module_prefix='tent', transactive_node=node)
-    component = component_class(**spec)
+    component_class = get_class_from_spec(spec, InformationServiceModel)
+    component = component_class(transactive_node=node, **spec_kwargs(spec))
     assert component.name == 'TemperatureForecast'
