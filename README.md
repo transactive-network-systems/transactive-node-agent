@@ -46,6 +46,7 @@ runs; `sample_config/weather_dot_gov_temperature_forecast_model.json` is one `in
 | `db_topic` | `TNS` | Root of every topic the agent derives (archive and signal topics below). The deployment uses `tns`. |
 | `subscribe_all_platforms` | `false` | Subscribe to the derived and configured topics on every platform of the federation, not only the local one. |
 | `neighbors[].sender` | none | In a neighbor entry: the identity the platform must present for signals claiming to come from that neighbor, `identity@instance` or a bare `identity` (any platform). Read and removed by the agent before TENT sees the entry; see the section on sender identity. |
+| `slow_iteration_warning` | `5` | Seconds. A state-machine iteration that takes longer is logged at WARNING naming the market whose events took longest. Read and removed by the agent before TENT sees the configuration. |
 | `topics` | `{}` | Map of subscribe keys to topics. Components name a key (for example a meter point's `subscribe_key`); the agent subscribes to the topic. Entries here also override any derived topic of the same key; the value `IGNORE` disables a publish key. |
 
 ### Node keys (TENT)
@@ -59,7 +60,7 @@ runs; `sample_config/weather_dot_gov_temperature_forecast_model.json` is one `in
 | `simulation_start_time` | | Simulated time at the anchor. Required when `simulation` is true. |
 | `simulation_one_hour_in_seconds` | `3600` | Real seconds per simulated hour. |
 | `simulation_anchor_time` | `TENT_SIMULATION_ANCHOR_TIME` from the environment, else node creation time | Real time at which simulated time equals `simulation_start_time`. Set it to the same value on every node of one simulation so nodes started at different times agree on the simulated time (see the section on the environment below). |
-| `loop_sleep_duration` | `0.01` | Seconds the state-machine loop yields after each market's events and after each pass. |
+| `loop_sleep_duration` | `0.01` | Seconds the state-machine loop pauses after each pass (see the section on the loop below). |
 | `actor_id`, `organization_id` | `null` | Identity of the actor this node represents and of its business entity; archived. |
 
 ### `data_manager`
@@ -195,6 +196,17 @@ with the topic, the expected and the presented identity, at most one line per pr
 number suppressed. A transactive neighbor without `sender` is accepted from anyone and is named once at WARNING when the
 configuration is applied. A changed binding is taken in place on an UPDATE. The deployed configurations bind every
 transactive neighbor; the city's bulk supplier is not a transactive neighbor and sends no signals.
+
+## The state-machine loop
+
+The node's markets run in one greenlet: each pass polls the meter points and runs every market's events, in TENT's
+`_state_machine_iteration`. TENT is synchronous, so the greenlet hands control to the platform only where the node's
+`_sleep` hook is called: after each market's events, and at the finer points TENT's entities call it from inside a
+long step. In the agent that hook is a cooperative yield (`gevent.sleep(0)`): control goes to the hub, pending pubsub
+messages and RPC replies are handled, and the iteration continues. The one real pause, `loop_sleep_duration`, is taken
+by the loop after each pass, so a pass with many yield points does not spend it many times over. Each market's events
+are timed; a pass longer than `slow_iteration_warning` seconds is logged at WARNING with the longest market and its
+time. An exception in a pass is logged with its traceback and the loop goes on.
 
 ## Topics
 

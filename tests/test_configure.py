@@ -274,3 +274,15 @@ def test_archive_records_with_non_finite_floats_go_out_as_tokens_through_the_age
     assert message[0]['data'] == {'id': 'v1', 'price': {'$float': 'inf'}, 'cost': {'$float': 'nan'}, 'quantity': 0.0}
     assert message[1]['data']['price'] == 0.1
     assert not agent.data_manager.archival_queue, 'nothing dropped, nothing requeued'
+
+
+def test_slow_iteration_warning_is_an_agent_key_read_and_stripped():
+    agent = TransactiveNodeAgent()
+    contents = deepcopy(CONFIG)
+    contents['slow_iteration_warning'] = 12
+    agent.configure_main('config', 'NEW', contents)
+    assert agent.slow_iteration_warning == 12.0 and 'slow_iteration_warning' not in agent.configuration
+    assert TransactiveNodeAgent().slow_iteration_warning == 5.0
+    contents['slow_iteration_warning'] = 0
+    with pytest.raises(ValueError, match='slow_iteration_warning must be a positive number'):
+        agent.configure_main('config', 'UPDATE', contents)

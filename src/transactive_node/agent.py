@@ -87,6 +87,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     SIGNAL_KEY_SUFFIX = '_incoming_transactive_signal'
     SENDER_KEY = 'sender'                 # agent key of a neighbor entry: the identity its signals must arrive from
     SENDER_MISMATCH_LOG_PERIOD = 60.0     # [s] one warning per presented sender per period, with the count suppressed
+    SLOW_ITERATION_KEY = 'slow_iteration_warning'   # agent key: [s] an outer iteration longer than this is warned about
+    DEFAULT_SLOW_ITERATION_WARNING = 5.0
     ANCHOR_ENVIRONMENT_VARIABLE = 'TENT_SIMULATION_ANCHOR_TIME'
 
     def __init__(self, *args, **kwargs):
@@ -108,6 +110,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self.db_topic = 'TNS'
         self.subscribe_all_platforms = False
         self.topics: dict = {}
+        self._iterating = False                           # inside a state-machine iteration: _sleep only yields
+        self.slow_iteration_warning: float = self.DEFAULT_SLOW_ITERATION_WARNING
         self._neighbor_senders: dict[str, str] = {}      # neighbor name -> identity its signals must be presented from
         self._sender_forms_logged: set[str] = set()      # neighbors whose accepted sender form was logged
         self._sender_mismatches: dict[str, dict] = {}    # presented sender -> {'since', 'count'} of dropped signals
@@ -162,12 +166,14 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         # The neighbors' sender bindings are the agent's (the transport's), not TENT's: taken out before TENT sees the
         # configuration, applied by the subscription wrapper.
         neighbor_senders = self._extract_neighbor_senders(contents)
+        slow_iteration_warning = self._extract_slow_iteration_warning(contents)
         TransactiveNode.validate_configuration(contents)  # raises (ConfigurationError) before anything is torn down
         simulation_settings = {key: contents.get(key) for key in self.SIMULATION_KEYS}
         identity = {}
         if self._configured:
             if action == 'UPDATE' and self.reconfigure(contents):
                 self._neighbor_senders = neighbor_senders
+                self.slow_iteration_warning = slow_iteration_warning
                 _log.info(f'Node {self.name!r} took the updated configuration in place; no rebuild.')
                 return
             if action == 'UPDATE' and simulation_settings == self._simulation_settings:
@@ -183,6 +189,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self._configured = True
         self._simulation_settings = simulation_settings
         self._neighbor_senders = neighbor_senders  # before configure_node: neighbors subscribe as they are built
+        self.slow_iteration_warning = slow_iteration_warning
         self.configure_node(contents)
         self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
 
@@ -205,6 +212,14 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
                 _log.warning(f'Signals from {name!r} are not bound to a sender: any publisher on the bus may send them. '
                              f'Set "sender" in the neighbor entry.')
         return senders
+
+    def _extract_slow_iteration_warning(self, contents: dict) -> float:
+        """Take the agent's slow_iteration_warning key out of the configuration (TENT's node Config does not know it)
+        and return it in seconds; the default when absent."""
+        value = contents.pop(self.SLOW_ITERATION_KEY, self.DEFAULT_SLOW_ITERATION_WARNING)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f'{self.SLOW_ITERATION_KEY} must be a positive number of seconds; got {value!r}.')
+        return float(value)
 
     # ------------------------------------------------------------------------------------------- sender identity
 
@@ -288,7 +303,34 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
                 self._state_machine_iteration()
             except Exception:
                 _log.exception('State machine iteration failed; continuing with the next iteration.')
+            finally:
+                self._iterating = False
             self._sleep()
+
+    def _state_machine_iteration(self):
+        """TENT's iteration (every meter point's poll, then every market's events, yielding after each market) with the
+        time of each market's events measured: an iteration longer than slow_iteration_warning is logged at WARNING
+        naming the longest market, so a deployment shows where its time goes."""
+        self._iterating = True
+        started = time.monotonic()
+        slowest_market, slowest = None, 0.0
+        for meter_point in self.meter_points:
+            meter_point.poll()
+        for series in self.market_series:
+            for market in series:
+                market_started = time.monotonic()
+                market.events()
+                self._sleep()
+                took = time.monotonic() - market_started
+                if took > slowest:
+                    slowest_market, slowest = market.name, took
+            series.prune_expired()
+        self._iterating = False
+        total = time.monotonic() - started
+        if total > self.slow_iteration_warning:
+            _log.warning(f'A state-machine iteration of node {self.name!r} took {total:.1f} s (slow_iteration_warning is '
+                         f'{self.slow_iteration_warning:.0f} s); the longest market was {slowest_market!r} at '
+                         f'{slowest:.1f} s.')
 
     @Core.receiver('onstop')
     def onstop(self, _, **__):
@@ -364,7 +406,11 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         return require_aware(datetime.fromisoformat(timestamp), f'{headers_mod.TIMESTAMP} header')
 
     def _sleep(self):
-        gevent.sleep(self.loop_sleep_duration)
+        """TENT's cooperative-yield hook. Inside an iteration (after each market's events, and at the finer points TENT's
+        entities call it from) it hands control to the hub and comes straight back, so pubsub messages and RPC replies
+        are handled while a long iteration runs; the one real pause of loop_sleep_duration is taken by the loop after
+        each iteration, so an iteration with many yield points does not spend it many times over."""
+        gevent.sleep(0 if self._iterating else self.loop_sleep_duration)
 
 def main():
     try:
