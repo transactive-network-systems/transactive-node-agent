@@ -46,6 +46,7 @@ import json
 import logging
 import sys
 
+from copy import deepcopy
 from datetime import datetime
 from typing import Callable
 
@@ -79,33 +80,28 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     provides access to messages on the VOLTTRON message bus, and runs the loop.
     """
     def __init__(self, *args, **kwargs):
-        _log.debug('in init')
         Agent.__init__(self, *args, **kwargs)
-        _log.debug('Agent initialized')
-        TransactiveNode.__init__(self)
-        _log.debug('Node initialized')
-
-        # Initial State:
-        self._stop_agent = False
+        self._configured = False
         self._state_machine_greenlet = None
         self._subscriptions: list[tuple[str, Callable, bool]] = []  # (prefix, wrapper, all_platforms) registered
+        self._init_node_state()
+        self.vip.config.set_default("config", self.default_config)
+        self.vip.config.subscribe(self.configure_main, actions=["NEW", "UPDATE"], pattern="config")
 
-        # Default configuration.
+    def _init_node_state(self):
+        """A fresh TransactiveNode (new identity and creation time, empty component lists, no data manager) with the
+        agent's own defaults on top. Called at construction and again when a configuration is torn down."""
+        TransactiveNode.__init__(self)
+        self._stop_agent = False
         self.db_topic = 'TNS'
         self.subscribe_all_platforms = False
         self.topics: dict = {}
-        self.plots_active = False  # TODO: Do the plots actually belong in the agent code, if not where?
-
-        # Set up config store.
         self.default_config.update({
             # Agent Configurations:
             "db_topic": self.db_topic,
             "subscribe_all_platforms": self.subscribe_all_platforms,
             "topics": self.topics,
-            "plots_active": self.plots_active
         })
-        self.vip.config.set_default("config", self.default_config)
-        self.vip.config.subscribe(self.configure_main, actions=["NEW", "UPDATE"], pattern="config")
 
     def _update_node_configurations(self, configs):
         updated_configs = super(TransactiveNodeAgent, self)._update_node_configurations(configs)
@@ -125,28 +121,38 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             self.topics[f'{neighbor_name}_incoming_transactive_signal'] = f'{self.db_topic}/{neighbor_name}/{self.name}'
             self.topics[f'{neighbor_name}_outgoing_transactive_signal'] = f'{self.db_topic}/{self.name}/{neighbor_name}'
         self.topics.update(updated_configs.get('topics', self.topics))
-        self.plots_active = bool(updated_configs.get('plots_active', self.plots_active))
         return updated_configs
 
     def configure_main(self, config_name, action, contents):
+        """Build the node from the configuration store's `config`.
+
+        An UPDATE is a full rebuild: the previous configuration is torn down first (loop stopped, bus subscriptions
+        dropped, every component forgotten) and the node is built again as if the agent had been restarted. The rebuilt
+        node is a new run: it has a new identity and archive row, and the simulation clock is re-anchored unless
+        simulation_anchor_time is configured.
+        """
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
-        #self.vip.pubsub.unsubscribe("pubsub", None, None)
-        self.topics = contents.get('topics', {})
-        self.configure_node(contents)
-        # # TODO: This could probably be pushed down to the market constructor, but other places that initialize markets
-        # #  would need to be updated as well so it doesn't do all this twice.
-        # for market in self.markets:
-        #     # market.marketState = MarketState.Delivery # TODO: Why is this setting the market to delivery at the start?
-        #
-        #     next_analysis_time = self.simulation_start_time if self.simulation else market.transition_times.delivery
-        #     _log.debug("{} schedule to run at exp_time: {} analysis_time: {}".format(self.name,
-        #                                                                              market.transition_times.delivery,
-        #                                                                              next_analysis_time))
-        #     for p in market.marginal_prices:
-        #         _log.debug(f"Market: {market.name} has initial marginal prices {p.value}"
-        #                    f" for interval: {p.interval.start_time}")
-        if self._state_machine_greenlet is None or self._state_machine_greenlet.dead:
-            self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
+        if self._configured:
+            _log.info('Tearing down the previous node configuration before applying this one.')
+            self._teardown_node()
+        self._configured = True
+        # TENT's configure consumes the dicts it is given (class_name and module_name are popped out of each component
+        # configuration), so work on a copy: the config store hands over the same contents again on a later UPDATE.
+        self.configure_node(deepcopy(contents))
+        self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
+
+    def _teardown_node(self):
+        """Undo the current configuration: stop the state-machine greenlet, unsubscribe every prefix this configuration
+        registered, and reset the node to its unconfigured state (no components, no data manager, fresh identity)."""
+        self._stop_agent = True
+        greenlet, self._state_machine_greenlet = self._state_machine_greenlet, None
+        if greenlet is not None and not greenlet.dead:
+            greenlet.kill()
+        for prefix, wrapper, all_platforms in self._subscriptions:
+            _log.info(f'Unsubscribing from topic: {prefix}')
+            self.vip.pubsub.unsubscribe(peer='pubsub', prefix=prefix, callback=wrapper, all_platforms=all_platforms)
+        self._subscriptions = []
+        self._init_node_state()
 
     def state_machine_loop(self):
         """Run market state-machine iterations until the agent stops.
