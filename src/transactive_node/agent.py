@@ -119,7 +119,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self.subscribe_all_platforms = bool(updated_configs.get('subscribe_all_platforms', self.subscribe_all_platforms))
         archive_root = f'{self.db_topic}/archive/{self.name}'
         self.topics: dict = {
-            # The node's archive traffic with the transactive-node historian (see VolttronDataManager): records out,
+            # The node's archive traffic with the Application Historian (see VolttronDataManager): records out,
             # table definitions out (pubsub registration), the historian's registration status in.
             VolttronDataManager.ARCHIVE_KEY: f'{archive_root}/records',
             VolttronDataManager.DEFINITIONS_KEY: f'{archive_root}/definitions',

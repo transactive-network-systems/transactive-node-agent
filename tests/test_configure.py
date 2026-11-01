@@ -100,7 +100,7 @@ def test_pubsub_registration_subscribes_to_the_status_topic_on_all_platforms_and
     def answer_definitions(peer, topic, headers=None, message=None, **kwargs):
         pubsub.published.append((topic, headers, message))
         if topic == 'tns/archive/Campus/definitions':
-            status = {'request_id': message['request_id'], 'node': 'Campus', 'status': 'success',
+            status = {'request_id': message['request_id'], 'publisher': 'Campus', 'status': 'success',
                       'registered_tables': [d['name'] for d in message['definitions']], 'rejected_tables': {},
                       'message': ''}
             pubsub.deliver('tns/archive/Campus/status', status, headers=headers)

@@ -9,7 +9,7 @@ The package also ships the VOLTTRON-specific components a node configuration can
 
 | Class | Module | Role |
 |---|---|---|
-| `VolttronDataManager` | `transactive_node.data_manager` | Registers archive tables with the TNS historian (RPC or pubsub) and publishes archive records on the node's archive topic. |
+| `VolttronDataManager` | `transactive_node.data_manager` | Registers archive tables with the Application Historian (RPC or pubsub) and publishes archive records on the node's archive topic. |
 | `TNSMeterPoint` | `transactive_node.tns_meter_point` | A meter point fed by a `devices/` publication: one named point of the all-points message. |
 | `WeatherDotGovTemperatureForecastModel` | `transactive_node.weather_dot_gov_temperature_forecast_model` | Hourly temperature forecast from the VOLTTRON weather.gov agent, by RPC. |
 | `TNSDirectRatioActuationManager` | `transactive_node.local_asset.actuation_manager.tns_direct_ratio` | Sets and reverts points through the platform actuator agent. |
@@ -76,7 +76,7 @@ The archive. The deployment uses `VolttronDataManager`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `historian_vip` | required | VIP identity of the transactive-node historian. |
+| `historian_vip` | required | VIP identity of the Application Historian (see "Deploying with the Application Historian" below). |
 | `registration` | `rpc` | How the node registers its archive table definitions with the historian before publishing: `rpc` or `pubsub` (below). Any other value is an error. |
 | `external_platform` | `""` | Platform the historian runs on, for the `rpc` path in a federation. The modular platform has no cross-platform RPC, so a remote historian needs the `pubsub` path; the key then only documents where the historian is. |
 | `rpc_timeout` | `30` | Seconds to wait for one answer (an RPC reply or a status message). |
@@ -100,7 +100,7 @@ The status mapping (the RPC reply and the status message are the same shape):
 ```json
 {
   "request_id": "the request's uuid (null on the RPC path)",
-  "node": "PNNL_Campus",
+  "publisher": "PNNL_Campus",
   "status": "success | partial | error",
   "registered_tables": ["transactive_node", "market"],
   "rejected_tables": {"meter_point": {"message": "definition differs from the stored one", "differences": "..."}},
@@ -183,7 +183,7 @@ With `db_topic` D, node name N and a neighbor named B:
 | Topic | Direction | Content |
 |---|---|---|
 | `D/archive/N/records` | published | Batches of archive records (`{"table_name", "data"}` envelopes) for the historian. |
-| `D/archive/N/definitions` | published | Registration request on the `pubsub` path: `{"node", "request_id", "definitions", "schema_version"}`. |
+| `D/archive/N/definitions` | published | Registration request on the `pubsub` path: `{"publisher", "request_id", "definitions", "schema_version"}`; `publisher` is the node's name, the `<publisher>` segment of the historian's archive topics. |
 | `D/archive/N/status` | subscribed, all platforms | The historian's answer to a registration request (status mapping above). |
 | `D/N/B` | published | Transactive signals from this node to neighbor B. |
 | `D/B/N` | subscribed | Transactive signals from neighbor B to this node. |
@@ -193,6 +193,72 @@ Publications carry `Date` and `TimeStamp` headers with the node's current time (
 subscriptions the `TimeStamp` header is the time of the reading; a missing header falls back to the node's clock, a
 naive timestamp is rejected. A subscription to a topic receives that topic and topics below it only: a subscription
 to `.../HP1` does not receive `.../HP10`, although the platform matches both by prefix.
+
+## Deploying with the Application Historian
+
+The Transactive Network System (TNS) archive is the Application Historian (`code/volttron-transactive-node-historian`,
+distribution `volttron-application-historian`, class `historian.application.agent.ApplicationHistorian`): a VOLTTRON
+historian that stores the nodes' archive records through TENT's `LocalDataManager` and also serves as the platform's
+standard historian. Its own README gives the registration contract, the status messages and the configuration keys;
+this section is the TNS deployment of it, which the container stack runs on the `central` platform.
+
+Identity. The containers install the historian as `tns.historian` (the agent's default is `platform.historian`), and
+every node's `data_manager.historian_vip` says `tns.historian`. The two must agree; neither side has a fallback.
+
+Configuration. The nodes use `db_topic` `tns`, so their archive topics are `tns/archive/<node name>/records`,
+`.../definitions` and `.../status`. The historian's config-store entry `config`
+(`containers/tent/central/agent_configs/tns-historian.json`) therefore captures `tns/archive/` and nothing else under
+`tns/`: the nodes exchange transactive signals on `tns/<sender>/<receiver>`, and those are not records.
+
+```json
+{
+  "connection": {"params": {"url": "sqlite:////home/vuzer/db/historian.sqlite"}},
+  "all_platforms": true,
+  "capture_device_data": true,
+  "capture_analysis_data": true,
+  "capture_log_data": true,
+  "capture_record_data": true,
+  "custom_topics": {"capture_record_data": ["tns/archive/"]}
+}
+```
+
+`all_platforms` is required: the nodes run on other platforms of the federation. The URL is a SQLAlchemy URL (four
+slashes for an absolute SQLite path); the database lives on the `central_volume` mount.
+
+Installation, outside the containers:
+
+```shell
+vctl install-lib /path/to/TENT
+vctl install /path/to/volttron-transactive-node-historian --vip-identity tns.historian --tag historian --start
+vctl config store tns.historian config containers/tent/central/agent_configs/tns-historian.json
+```
+
+Registration path. The modular platform has no cross-platform RPC, so nodes on other platforms than the historian use
+`"registration": "pubsub"` (the campus sample); a node on the historian's platform may use the default `rpc`.
+
+Authorization for the RPC path (the container setup script does not apply these; run them on the central platform):
+
+```shell
+vctl authz add agent tns.historian --protected-rpcs create_tables
+vctl authz add agent tn.campus --rpc-capabilities tns.historian.create_tables
+vctl authz add agent tn.city --rpc-capabilities tns.historian.create_tables
+```
+
+The pubsub path has no per-publisher capability; see the security note under `data_manager` above.
+
+Archive schema version. The historian's TENT and every node's TENT must have the same
+`tent.data_manager.ARCHIVE_SCHEMA_VERSION`; the containers build all of them from `code/TENT`. A historian database
+written with another version is refused at the historian's start-up and must be recreated (delete the file on the
+volume or point the URL elsewhere).
+
+Verifying a deployment. From inside the central platform, the historian's `scripts/probe_queries.py` lists the stored
+topics and queries one:
+
+```shell
+python scripts/probe_queries.py tcp://172.28.5.6:22916 tns.historian 'Campus/SMALL_OFFICE_DR/*/Power'
+```
+
+The TENT analysis tool (`code/tent-analysis`) reads the resulting database directly.
 
 ## Tests
 

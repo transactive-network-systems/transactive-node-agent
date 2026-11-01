@@ -73,19 +73,19 @@ def record(table, ident):
 
 
 def success_for(message):
-    return {'request_id': message['request_id'], 'node': message['node'], 'status': 'success',
+    return {'request_id': message['request_id'], 'publisher': message['publisher'], 'status': 'success',
             'registered_tables': [d['name'] for d in message['definitions']], 'rejected_tables': {}, 'message': ''}
 
 
 def partial_for(message):
-    return {'request_id': message['request_id'], 'node': message['node'], 'status': 'partial',
+    return {'request_id': message['request_id'], 'publisher': message['publisher'], 'status': 'partial',
             'registered_tables': ['test_table'],
             'rejected_tables': {'other_table': {'message': 'definition differs', 'differences': 'column id: Uuid vs Int'}},
             'message': 'one table rejected'}
 
 
 def error_for(message):
-    return {'request_id': message['request_id'], 'node': message['node'], 'status': 'error', 'registered_tables': [],
+    return {'request_id': message['request_id'], 'publisher': message['publisher'], 'status': 'error', 'registered_tables': [],
             'rejected_tables': {'test_table': {'message': 'no such type', 'differences': None}}, 'message': 'bad types'}
 
 
@@ -234,7 +234,7 @@ def test_registration_must_be_rpc_or_pubsub():
 
 
 def test_rpc_path_accepts_the_full_status_shape_and_does_not_subscribe():
-    agent = FakeAgent(reply={'request_id': None, 'node': 'Campus', 'status': 'success',
+    agent = FakeAgent(reply={'request_id': None, 'publisher': 'Campus', 'status': 'success',
                              'registered_tables': ['test_table'], 'rejected_tables': {}, 'message': ''})
     dm = VolttronDataManager(agent, historian_vip='tns.historian')
     dm.add_tables([DEFINITION])
@@ -245,7 +245,7 @@ def test_rpc_path_accepts_the_full_status_shape_and_does_not_subscribe():
 
 
 def test_rpc_partial_registers_and_drops_records_for_rejected_tables(caplog):
-    agent = FakeAgent(reply=partial_for({'request_id': None, 'node': 'Campus', 'definitions': []}))
+    agent = FakeAgent(reply=partial_for({'request_id': None, 'publisher': 'Campus', 'definitions': []}))
     dm = VolttronDataManager(agent, historian_vip='tns.historian')
     dm.add_tables([DEFINITION, OTHER])
     dm.archive_data([record('test_table', 'a'), record('other_table', 'x')])
@@ -261,7 +261,7 @@ def test_rpc_partial_registers_and_drops_records_for_rejected_tables(caplog):
 
 
 def test_rpc_error_reply_raises_with_the_details():
-    agent = FakeAgent(reply=error_for({'request_id': None, 'node': 'Campus', 'definitions': []}))
+    agent = FakeAgent(reply=error_for({'request_id': None, 'publisher': 'Campus', 'definitions': []}))
     dm = VolttronDataManager(agent, historian_vip='tns.historian')
     dm.add_tables([DEFINITION])
     dm.archive_data(record('test_table', 'a'))
@@ -299,7 +299,7 @@ def test_historians_schema_version_is_logged_on_success(caplog):
 
 
 def test_only_records_without_rejected_tables_are_published_when_a_batch_is_all_rejected():
-    agent = FakeAgent(reply=partial_for({'request_id': None, 'node': 'Campus', 'definitions': []}))
+    agent = FakeAgent(reply=partial_for({'request_id': None, 'publisher': 'Campus', 'definitions': []}))
     dm = VolttronDataManager(agent, historian_vip='tns.historian')
     dm.add_tables([DEFINITION, OTHER])
     dm.init_archive()
@@ -328,7 +328,7 @@ def test_pubsub_success_subscribes_everywhere_publishes_definitions_and_flushes(
     assert agent.subscriptions == [('archive_status', dm._receive_status, True)]
     assert agent.vip.rpc.calls == [], 'no RPC on the pubsub path'
     (request,) = agent.definitions_published()
-    assert request['node'] == 'Campus' and request['definitions'] == [DEFINITION, OTHER]
+    assert request['publisher'] == 'Campus' and request['definitions'] == [DEFINITION, OTHER]
     assert request['schema_version'] == ARCHIVE_SCHEMA_VERSION
     uuid.UUID(request['request_id'], version=4)
     assert dm.archive_ready and agent.records_published() == [[record('test_table', 'a')]]

@@ -2,7 +2,7 @@
 VolttronDataManager: the DataManager a TransactiveNodeAgent uses to archive through a VOLTTRON historian.
 
 TENT itself knows nothing about VOLTTRON. Its components hand archive records to whatever DataManager the node was
-configured with; this one forwards them over the message bus to the transactive-node historian
+configured with; this one forwards them over the message bus to the Application Historian
 (volttron-transactive-node-historian), which owns the database. Two interactions:
 
 - At start-up (``init_archive``) the table definitions every configured component declared are registered with the
@@ -57,7 +57,7 @@ _log = logging.getLogger(__name__)
 
 
 class VolttronDataManager(DataManager):
-    """Archives through the transactive-node historian on the message bus.
+    """Archives through the Application Historian on the message bus.
 
     Before anything is archived the node's table definitions are registered with the historian, together with this
     TENT's archive schema version (tent.data_manager.ARCHIVE_SCHEMA_VERSION), by one of two paths selected with
@@ -67,7 +67,7 @@ class VolttronDataManager(DataManager):
       addressed with `external_platform` when the historian runs on another platform. The call is retried every
       `rpc_retry_period` seconds until it is answered or `rpc_total_timeout` has passed.
     - "pubsub": for federations without cross-platform RPC. The definitions are published on the agent's
-      `archive_definitions` key as `{"node", "request_id", "definitions", "schema_version"}`; the historian answers on
+      `archive_definitions` key as `{"publisher", "request_id", "definitions", "schema_version"}`; the historian answers on
       the node's status topic (the agent's `archive_status` key, subscribed on all platforms) and the answer carrying
       that request id is awaited for `rpc_timeout` seconds. Without an answer the request is published again with a
       new id every `rpc_retry_period` seconds, and given up after `rpc_total_timeout`.
@@ -88,7 +88,7 @@ class VolttronDataManager(DataManager):
 
     class Config(DataManager.Config):
         historian_vip: str = Setting(..., min_length=1,
-                                     description='VIP identity of the transactive-node historian.')
+                                     description='VIP identity of the Application Historian.')
         registration: Literal['rpc', 'pubsub'] = Setting(
             'rpc', description='How the table definitions are registered: the historian\'s create_tables RPC, or a '
                                'definitions publication answered on the node\'s status topic (for a historian on '
@@ -173,7 +173,7 @@ class VolttronDataManager(DataManager):
         request_id = str(uuid4())
         self._pending_request_id = request_id
         self._pending_reply = AsyncResult()
-        self.parent.publish(self.DEFINITIONS_KEY, message={'node': self.parent.name, 'request_id': request_id,
+        self.parent.publish(self.DEFINITIONS_KEY, message={'publisher': self.parent.name, 'request_id': request_id,
                                                            'definitions': definitions,
                                                            'schema_version': ARCHIVE_SCHEMA_VERSION})
         try:
