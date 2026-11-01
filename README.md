@@ -63,6 +63,7 @@ The archive. The deployment uses `VolttronDataManager`:
   "class_name": "VolttronDataManager",
   "module_name": "transactive_node.data_manager",
   "historian_vip": "tns.historian",
+  "external_platform": "central",
   "rpc_timeout": 30
 }
 ```
@@ -70,11 +71,15 @@ The archive. The deployment uses `VolttronDataManager`:
 | Key | Default | Meaning |
 |---|---|---|
 | `historian_vip` | required | VIP identity of the transactive-node historian. The node calls its `create_tables` RPC with every archive table definition it needs before publishing. |
-| `rpc_timeout` | `30` | Seconds to wait for the historian's reply. |
+| `external_platform` | `""` | Instance name of the federated platform the historian runs on; empty when it is the node's own platform. |
+| `rpc_timeout` | `30` | Seconds to wait for one `create_tables` reply. |
+| `rpc_retry_period` | `10` | Seconds between attempts while the historian does not answer (a federation connection takes a while to come up after the platforms start). |
+| `rpc_total_timeout` | `300` | Seconds after which an unanswered `create_tables` is given up and raised. |
 | `archive_key` | `archive` | Publish key the records go out under (see topics below). |
 
 Records produced before the historian has acknowledged the tables are queued and published as one batch when it has.
-A historian error reply is raised, not logged away.
+Each failed attempt is logged at error level; when the total timeout passes, or the historian rejects a table
+definition, the error is raised, not logged away.
 
 `LocalDataManager` from TENT (`tent.data_manager.local_data_manager`, with `db_params`) writes to a database directly
 and is what the city and small-office samples use.
