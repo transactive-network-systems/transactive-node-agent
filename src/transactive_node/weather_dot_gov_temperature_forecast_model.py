@@ -77,7 +77,7 @@ class WeatherDotGovTemperatureForecastModel(TemperatureForecastModel):
     Forecast times are aware throughout and are converted to the node's zone. Values are degrees Fahrenheit; a record
     whose `temperatureUnit` is Celsius is converted.
 
-    Configuration: `weather_vip` (the weather agent's VIP identity, required), `location` (one weather.gov location
+    Configuration: `weather_vip` (the weather agent's VIP identity, default `platform.weather`), `location` (one weather.gov location
     dictionary, required: {"lat": .., "long": ..}, {"station": "KPSC"} or {"wfo": .., "x": .., "y": ..}),
     `external_platform` (platform name when the weather agent runs elsewhere in the federation), `rpc_timeout`
     (seconds), `temperature_point_name` (default `air_temperature`, the weather agent's standard name for NOAA's
@@ -88,14 +88,14 @@ class WeatherDotGovTemperatureForecastModel(TemperatureForecastModel):
     RPC_METHOD = 'get_hourly_forecast'
 
     def __init__(self,
-                 weather_vip: str,
                  location: Mapping,
+                 weather_vip: str = 'platform.weather',
                  external_platform: str = '',
                  rpc_timeout: float = 15.0,
                  temperature_point_name: str = 'air_temperature',
                  *args, **kwargs):
         if not weather_vip:
-            raise ValueError('WeatherDotGovTemperatureForecastModel requires weather_vip, the weather agent\'s VIP identity.')
+            raise ValueError('weather_vip must name the weather agent\'s VIP identity (default platform.weather).')
         if not isinstance(location, Mapping) or not location:
             raise ValueError('WeatherDotGovTemperatureForecastModel requires location, a weather.gov location '
                              f'dictionary such as {{"lat": 46.23, "long": -119.22}}; got {location!r}.')

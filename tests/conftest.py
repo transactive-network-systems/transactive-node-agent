@@ -144,7 +144,26 @@ def _install_fake_gevent():
     def sleep(seconds=0):
         pass
 
-    _module('gevent', Timeout=Timeout, sleep=sleep)
+    class AsyncResult:
+        """set() then get(); get() on an unset result raises Timeout at once (the fake never blocks)."""
+        _unset = object()
+
+        def __init__(self):
+            self._value = self._unset
+
+        def set(self, value=None):
+            self._value = value
+
+        def ready(self):
+            return self._value is not self._unset
+
+        def get(self, block=True, timeout=None):
+            if self._value is self._unset:
+                raise Timeout()
+            return self._value
+
+    gevent = _module('gevent', Timeout=Timeout, sleep=sleep)
+    gevent.event = _module('gevent.event', AsyncResult=AsyncResult)
 
 
 def _install_fake_volttron():

@@ -10,7 +10,9 @@
   "data_manager": {
     "class_name": "VolttronDataManager",
     "module_name": "transactive_node.data_manager",
-    "historian_vip": "tns.historian"
+    "historian_vip": "tns.historian",
+    "external_platform": "central",
+    "registration": "pubsub"
   },
   "information_service_models": [
     {

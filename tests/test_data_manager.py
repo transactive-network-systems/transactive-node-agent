@@ -1,6 +1,7 @@
 """VolttronDataManager against a fake agent: table registration over RPC, queueing until the historian is ready,
 publishing envelopes through the agent's archive key. Runs without a VOLTTRON platform."""
-from collections import deque
+import logging
+import uuid
 
 import pytest
 
@@ -27,18 +28,64 @@ class FakeRpc:
 
 
 class FakeAgent:
-    """What the data manager needs of a TransactiveNodeAgent: vip.rpc and publish(key, message)."""
-    def __init__(self, reply=None):
+    """What the data manager needs of a TransactiveNodeAgent: name, vip.rpc, publish(key, message) and
+    register_subscription(key, callback, all_platforms). `historian` is an optional function of the published
+    definitions message returning the status the historian would publish (None for no answer); it is delivered to the
+    status subscription at publish time, as a historian answering on the bus would."""
+    def __init__(self, reply=None, historian=None):
+        self.name = 'Campus'
         self.vip = type('Vip', (), {})()
         self.vip.rpc = FakeRpc(reply if reply is not None else {'status': 'success', 'registered_tables': []})
         self.published = []
+        self.subscriptions = []  # (key, callback, all_platforms)
+        self.historian = historian
 
     def publish(self, publish_key, message, date_time=None):
         self.published.append((publish_key, message))
+        if publish_key == 'archive_definitions' and self.historian is not None:
+            status = self.historian(message)
+            if status is not None:
+                self.deliver_status(status)
+
+    def register_subscription(self, subscribe_key, callback, all_platforms=None):
+        self.subscriptions.append((subscribe_key, callback, all_platforms))
+
+    def deliver_status(self, status):
+        for key, callback, _ in self.subscriptions:
+            if key == 'archive_status':
+                callback(None, key, status)
+
+    def definitions_published(self):
+        return [m for k, m in self.published if k == 'archive_definitions']
+
+    def records_published(self):
+        return [m for k, m in self.published if k == 'archive']
 
 
 DEFINITION = {"name": "test_table", "columns": [{"name": "id", "type": "Uuid", "kwargs": {"primary_key": True}},
                                                  {"name": "value", "type": "Float"}]}
+OTHER = {"name": "other_table", "columns": [{"name": "id", "type": "Uuid", "kwargs": {"primary_key": True}}]}
+
+
+def record(table, ident):
+    return {'table_name': table, 'data': {'id': ident}}
+
+
+def success_for(message):
+    return {'request_id': message['request_id'], 'node': message['node'], 'status': 'success',
+            'registered_tables': [d['name'] for d in message['definitions']], 'rejected_tables': {}, 'message': ''}
+
+
+def partial_for(message):
+    return {'request_id': message['request_id'], 'node': message['node'], 'status': 'partial',
+            'registered_tables': ['test_table'],
+            'rejected_tables': {'other_table': {'message': 'definition differs', 'differences': 'column id: Uuid vs Int'}},
+            'message': 'one table rejected'}
+
+
+def error_for(message):
+    return {'request_id': message['request_id'], 'node': message['node'], 'status': 'error', 'registered_tables': [],
+            'rejected_tables': {'test_table': {'message': 'no such type', 'differences': None}}, 'message': 'bad types'}
 
 
 def test_requires_a_historian_identity():
@@ -138,7 +185,7 @@ def test_registration_gives_up_after_the_total_timeout(monkeypatch):
     agent.vip.rpc = FlakyRpc({'status': 'success'}, failures=100)
     dm = VolttronDataManager(agent, historian_vip='tns.historian', rpc_retry_period=10, rpc_total_timeout=25)
     dm.add_tables([DEFINITION])
-    with pytest.raises(RuntimeError, match='did not answer create_tables'):
+    with pytest.raises(RuntimeError, match='did not answer the table registration'):
         dm.init_archive()
     assert len(agent.vip.rpc.calls) == 4, 'attempts at t=0, 10, 20 and the one that finds the deadline passed'
     assert not dm.archive_ready
@@ -151,3 +198,152 @@ def test_rejected_definition_is_not_retried():
     with pytest.raises(RuntimeError, match='did not register'):
         dm.init_archive()
     assert len(agent.vip.rpc.calls) == 1
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Registration path selection and the new reply shape on the RPC path
+# ----------------------------------------------------------------------------------------------------------------------
+
+def test_registration_must_be_rpc_or_pubsub():
+    with pytest.raises(ValueError, match='registration'):
+        VolttronDataManager(FakeAgent(), historian_vip='tns.historian', registration='http')
+    assert VolttronDataManager(FakeAgent(), historian_vip='tns.historian').registration == 'rpc'
+
+
+def test_rpc_path_accepts_the_full_status_shape_and_does_not_subscribe():
+    agent = FakeAgent(reply={'request_id': None, 'node': 'Campus', 'status': 'success',
+                             'registered_tables': ['test_table'], 'rejected_tables': {}, 'message': ''})
+    dm = VolttronDataManager(agent, historian_vip='tns.historian')
+    dm.add_tables([DEFINITION])
+    dm.archive_data(record('test_table', 'a'))
+    dm.init_archive()
+    assert dm.archive_ready and agent.subscriptions == [] and agent.definitions_published() == []
+    assert agent.records_published() == [[record('test_table', 'a')]]
+
+
+def test_rpc_partial_registers_and_drops_records_for_rejected_tables(caplog):
+    agent = FakeAgent(reply=partial_for({'request_id': None, 'node': 'Campus', 'definitions': []}))
+    dm = VolttronDataManager(agent, historian_vip='tns.historian')
+    dm.add_tables([DEFINITION, OTHER])
+    dm.archive_data([record('test_table', 'a'), record('other_table', 'x')])
+    with caplog.at_level(logging.ERROR, logger='transactive_node.data_manager'):
+        dm.init_archive()
+        dm.archive_data([record('other_table', 'y'), record('test_table', 'b'), record('other_table', 'z')])
+    assert dm.archive_ready and set(dm.rejected_tables) == {'other_table'}
+    assert agent.records_published() == [[record('test_table', 'a')], [record('test_table', 'b')]]
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert sum('rejected archive table' in m and 'column id: Uuid vs Int' in m for m in errors) == 1
+    assert sum('Dropping records for archive table' in m for m in errors) == 1, 'once per table, not per record'
+
+
+def test_rpc_error_reply_raises_with_the_details():
+    agent = FakeAgent(reply=error_for({'request_id': None, 'node': 'Campus', 'definitions': []}))
+    dm = VolttronDataManager(agent, historian_vip='tns.historian')
+    dm.add_tables([DEFINITION])
+    dm.archive_data(record('test_table', 'a'))
+    with pytest.raises(RuntimeError, match="bad types.*no such type"):
+        dm.init_archive()
+    assert not dm.archive_ready and agent.published == []
+
+
+def test_only_records_without_rejected_tables_are_published_when_a_batch_is_all_rejected():
+    agent = FakeAgent(reply=partial_for({'request_id': None, 'node': 'Campus', 'definitions': []}))
+    dm = VolttronDataManager(agent, historian_vip='tns.historian')
+    dm.add_tables([DEFINITION, OTHER])
+    dm.init_archive()
+    dm.archive_data([record('other_table', 'x')])
+    assert agent.records_published() == [], 'no empty batch goes out'
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Pubsub registration path
+# ----------------------------------------------------------------------------------------------------------------------
+
+def make_pubsub_dm(agent, **kwargs):
+    dm = VolttronDataManager(agent, historian_vip='tns.historian', registration='pubsub', external_platform='central',
+                             rpc_timeout=5, **kwargs)
+    dm.add_tables([DEFINITION, OTHER])
+    return dm
+
+
+def test_pubsub_success_subscribes_everywhere_publishes_definitions_and_flushes():
+    agent = FakeAgent(historian=success_for)
+    dm = make_pubsub_dm(agent)
+    dm.archive_data(record('test_table', 'a'))
+    dm.init_archive()
+
+    assert agent.subscriptions == [('archive_status', dm._receive_status, True)]
+    assert agent.vip.rpc.calls == [], 'no RPC on the pubsub path'
+    (request,) = agent.definitions_published()
+    assert request['node'] == 'Campus' and request['definitions'] == [DEFINITION, OTHER]
+    uuid.UUID(request['request_id'], version=4)
+    assert dm.archive_ready and agent.records_published() == [[record('test_table', 'a')]]
+    assert dm.pending_request_id is None
+
+
+def test_pubsub_partial_and_error_follow_the_same_rules_as_rpc(caplog):
+    agent = FakeAgent(historian=partial_for)
+    dm = make_pubsub_dm(agent)
+    with caplog.at_level(logging.ERROR, logger='transactive_node.data_manager'):
+        dm.init_archive()
+        dm.archive_data([record('other_table', 'x'), record('test_table', 'a')])
+    assert dm.archive_ready and set(dm.rejected_tables) == {'other_table'}
+    assert agent.records_published() == [[record('test_table', 'a')]]
+    assert any('definition differs' in r.getMessage() for r in caplog.records)
+
+    agent = FakeAgent(historian=error_for)
+    dm = make_pubsub_dm(agent)
+    with pytest.raises(RuntimeError, match='bad types'):
+        dm.init_archive()
+    assert not dm.archive_ready and agent.records_published() == []
+
+
+def test_pubsub_retries_with_a_new_request_id_and_ignores_answers_to_other_requests(monkeypatch, caplog):
+    import transactive_node.data_manager as module
+    sleeps = []
+    monkeypatch.setattr(module.gevent, 'sleep', lambda seconds: sleeps.append(seconds))
+    answers = {'count': 0}
+
+    def historian(message):
+        answers['count'] += 1
+        if answers['count'] == 1:
+            return None  # the first request goes unanswered
+        if answers['count'] == 2:
+            # A late answer to the first request arrives before the answer to the second: it must be ignored.
+            first_id = agent.definitions_published()[0]['request_id']
+            agent.deliver_status(dict(success_for(message), request_id=first_id))
+            return None
+        return success_for(message)
+
+    agent = FakeAgent(historian=historian)
+    dm = make_pubsub_dm(agent, rpc_retry_period=7, rpc_total_timeout=600)
+    with caplog.at_level(logging.DEBUG, logger='transactive_node.data_manager'):
+        dm.init_archive()
+    requests = agent.definitions_published()
+    assert len(requests) == 3 and len({r['request_id'] for r in requests}) == 3, 'a fresh id on every attempt'
+    assert sleeps == [7, 7]
+    assert dm.archive_ready
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 2 and all('no status for request' in r.getMessage() for r in errors)
+    assert any('Ignoring status for request' in r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG)
+
+
+def test_pubsub_gives_up_after_the_total_timeout(monkeypatch):
+    import transactive_node.data_manager as module
+    clock = {'now': 0.0}
+    monkeypatch.setattr(module.gevent, 'sleep', lambda seconds: clock.__setitem__('now', clock['now'] + seconds))
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock['now'])
+    agent = FakeAgent(historian=lambda message: None)
+    dm = make_pubsub_dm(agent, rpc_retry_period=10, rpc_total_timeout=25)
+    with pytest.raises(RuntimeError, match='did not answer the table registration'):
+        dm.init_archive()
+    assert len(agent.definitions_published()) == 4 and not dm.archive_ready
+
+
+def test_status_that_is_not_a_mapping_is_ignored(caplog):
+    agent = FakeAgent(historian=lambda message: 'nonsense')
+    dm = make_pubsub_dm(agent, rpc_retry_period=1, rpc_total_timeout=0)
+    with pytest.raises(RuntimeError):
+        with caplog.at_level(logging.WARNING, logger='transactive_node.data_manager'):
+            dm.init_archive()
+    assert any('not a mapping' in r.getMessage() for r in caplog.records)

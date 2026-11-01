@@ -9,7 +9,7 @@ The package also ships the VOLTTRON-specific components a node configuration can
 
 | Class | Module | Role |
 |---|---|---|
-| `VolttronDataManager` | `transactive_node.data_manager` | Registers archive tables with the TNS historian over RPC and publishes archive records to the historian's topic. |
+| `VolttronDataManager` | `transactive_node.data_manager` | Registers archive tables with the TNS historian (RPC or pubsub) and publishes archive records on the node's archive topic. |
 | `TNSMeterPoint` | `transactive_node.tns_meter_point` | A meter point fed by a `devices/` publication: one named point of the all-points message. |
 | `WeatherDotGovTemperatureForecastModel` | `transactive_node.weather_dot_gov_temperature_forecast_model` | Hourly temperature forecast from the VOLTTRON weather.gov agent, by RPC. |
 | `TNSDirectRatioActuationManager` | `transactive_node.local_asset.actuation_manager.tns_direct_ratio` | Sets and reverts points through the platform actuator agent. |
@@ -64,22 +64,50 @@ The archive. The deployment uses `VolttronDataManager`:
   "module_name": "transactive_node.data_manager",
   "historian_vip": "tns.historian",
   "external_platform": "central",
-  "rpc_timeout": 30
+  "registration": "pubsub"
 }
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
-| `historian_vip` | required | VIP identity of the transactive-node historian. The node calls its `create_tables` RPC with every archive table definition it needs before publishing. |
-| `external_platform` | `""` | Instance name of the federated platform the historian runs on; empty when it is the node's own platform. |
-| `rpc_timeout` | `30` | Seconds to wait for one `create_tables` reply. |
-| `rpc_retry_period` | `10` | Seconds between attempts while the historian does not answer (a federation connection takes a while to come up after the platforms start). |
-| `rpc_total_timeout` | `300` | Seconds after which an unanswered `create_tables` is given up and raised. |
+| `historian_vip` | required | VIP identity of the transactive-node historian. |
+| `registration` | `rpc` | How the node registers its archive table definitions with the historian before publishing: `rpc` or `pubsub` (below). Any other value is an error. |
+| `external_platform` | `""` | Platform the historian runs on, for the `rpc` path in a federation. The modular platform has no cross-platform RPC, so a remote historian needs the `pubsub` path; the key then only documents where the historian is. |
+| `rpc_timeout` | `30` | Seconds to wait for one answer (an RPC reply or a status message). |
+| `rpc_retry_period` | `10` | Seconds between registration attempts while the historian does not answer. |
+| `rpc_total_timeout` | `300` | Seconds after which an unanswered registration is given up with an error; nothing is archived in that run. |
 | `archive_key` | `archive` | Publish key the records go out under (see topics below). |
 
-Records produced before the historian has acknowledged the tables are queued and published as one batch when it has.
-Each failed attempt is logged at error level; when the total timeout passes, or the historian rejects a table
-definition, the error is raised, not logged away.
+Registration paths:
+
+- `rpc`: the historian's `create_tables` RPC is called with the list of definitions and returns the status mapping
+  below. The call is repeated every `rpc_retry_period` seconds until it is answered, for at most `rpc_total_timeout`.
+- `pubsub`: the node subscribes to its status topic on all platforms, publishes the definitions on its definitions
+  topic with a fresh `request_id`, and waits `rpc_timeout` seconds for the status carrying that id. Without an answer
+  it logs an error and publishes again with a new id every `rpc_retry_period` seconds, giving up after
+  `rpc_total_timeout`. Status messages for other request ids are logged at debug level and ignored.
+
+The status mapping (the RPC reply and the status message are the same shape):
+
+```json
+{
+  "request_id": "the request's uuid (null on the RPC path)",
+  "node": "PNNL_Campus",
+  "status": "success | partial | error",
+  "registered_tables": ["transactive_node", "market"],
+  "rejected_tables": {"meter_point": {"message": "definition differs from the stored one", "differences": "..."}},
+  "message": "free text"
+}
+```
+
+`success` turns the archive on and publishes the records queued while waiting. `partial` turns the archive on too,
+logs one error per rejected table with its message and differences, and drops every record addressed to a rejected
+table, queued or later, with one further error per table name. `error` is raised with the message and the rejected
+tables; nothing is archived.
+
+Security note on the `pubsub` path: the platform has no per-publisher capability for pubsub as it has for protected
+RPCs, so any agent on any platform of the federation can publish definitions or records under any node's name. The
+sender-identity check for signals and archive traffic (audit item A-SEC-01) is deferred by decision of the owner.
 
 `LocalDataManager` from TENT (`tent.data_manager.local_data_manager`, with `db_params`) writes to a database directly
 and is what the city and small-office samples use.
@@ -95,7 +123,7 @@ TENT classes are documented in TENT; the agent's own components take:
   `external_platform`, plus TENT's `MeterPoint` keys (`measurement_type`, `measurement_unit`, `measurement_interval`,
   `data_period_seconds`, `max_buffer_seconds`, `scale_factor`). A value of `0.0` is a reading; a message that is not a
   mapping or has no such point is logged and ignored.
-- `WeatherDotGovTemperatureForecastModel`: `weather_vip` (the weather agent's identity, required), `location` (one
+- `WeatherDotGovTemperatureForecastModel`: `weather_vip` (the weather agent's identity, default `platform.weather`), `location` (one
   weather.gov location dictionary, required: `{"lat": .., "long": ..}`, `{"station": "KPSC"}` or
   `{"wfo": .., "x": .., "y": ..}`), `external_platform` (when the weather agent runs on another platform of the
   federation), `rpc_timeout` (seconds, default 15), `temperature_point_name` (default `air_temperature`, the weather
@@ -120,7 +148,9 @@ With `db_topic` D, node name N and a neighbor named B:
 
 | Topic | Direction | Content |
 |---|---|---|
-| `D/N/archive` | published | Batches of archive records (`{"table_name", "data"}` envelopes) for the historian. |
+| `D/archive/N/records` | published | Batches of archive records (`{"table_name", "data"}` envelopes) for the historian. |
+| `D/archive/N/definitions` | published | Registration request on the `pubsub` path: `{"node", "request_id", "definitions"}`. |
+| `D/archive/N/status` | subscribed, all platforms | The historian's answer to a registration request (status mapping above). |
 | `D/N/B` | published | Transactive signals from this node to neighbor B. |
 | `D/B/N` | subscribed | Transactive signals from neighbor B to this node. |
 | `topics[key]` | subscribed | Device data for the component that names `key`; `devices/` and `analysis/` messages are unwrapped to their first element (the point values). |

@@ -53,6 +53,7 @@ from typing import Callable
 from tent.transactive_node import TransactiveNode
 from tent.utils.helpers import json_encoder, require_aware
 from tent.utils.timer import Timer
+from transactive_node.data_manager import VolttronDataManager
 
 from importlib.metadata import distribution, PackageNotFoundError
 try:
@@ -109,9 +110,13 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         # Agent Configurations:
         self.db_topic = updated_configs.get('db_topic', self.db_topic)
         self.subscribe_all_platforms = bool(updated_configs.get('subscribe_all_platforms', self.subscribe_all_platforms))
+        archive_root = f'{self.db_topic}/archive/{self.name}'
         self.topics: dict = {
-            # Archive records from the node's VolttronDataManager, captured by the transactive-node historian.
-            'archive': f'{self.db_topic}/{self.name}/archive',
+            # The node's archive traffic with the transactive-node historian (see VolttronDataManager): records out,
+            # table definitions out (pubsub registration), the historian's registration status in.
+            VolttronDataManager.ARCHIVE_KEY: f'{archive_root}/records',
+            VolttronDataManager.DEFINITIONS_KEY: f'{archive_root}/definitions',
+            VolttronDataManager.STATUS_KEY: f'{archive_root}/status',
         }
         # Set up transactive signaling topics:
         for neighbor in configs.get('neighbors', []):
@@ -192,13 +197,15 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         except (TypeError, ValueError) as e:
             _log.warning(f'Failed to serialize outgoing signal to {recipient}: {signal_dict} with error: {e}')
 
-    def register_subscription(self, subscribe_key, callback):
+    def register_subscription(self, subscribe_key, callback, all_platforms: bool | None = None):
         """Subscribe the callback to the topic the configuration maps `subscribe_key` to.
 
         The platform matches subscriptions by string prefix, so a subscription to devices/.../HP1 also receives
         devices/.../HP10; the wrapper accepts a publication only when its topic is the configured topic itself or lies
-        below it (topic == prefix or topic starts with prefix + '/').
+        below it (topic == prefix or topic starts with prefix + '/'). `all_platforms` overrides the node's
+        subscribe_all_platforms setting for this subscription (the historian's status topic is subscribed everywhere).
         """
+        all_platforms = self.subscribe_all_platforms if all_platforms is None else bool(all_platforms)
         subscription_topic = self.topics.get(subscribe_key)
         if not subscription_topic:
             _log.warning(f'No subscription topic registered for subscribe_key: {subscribe_key}')
@@ -222,8 +229,8 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self.vip.pubsub.subscribe(peer='pubsub',
                                   prefix=subscription_topic,
                                   callback=wrapper,
-                                  all_platforms=self.subscribe_all_platforms)
-        self._subscriptions.append((subscription_topic, wrapper, self.subscribe_all_platforms))
+                                  all_platforms=all_platforms)
+        self._subscriptions.append((subscription_topic, wrapper, all_platforms))
 
     @staticmethod
     def _time_from_headers(headers) -> datetime:

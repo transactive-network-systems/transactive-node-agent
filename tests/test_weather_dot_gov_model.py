@@ -55,6 +55,8 @@ def test_requires_an_identity_a_location_mapping_and_a_point_name(node):
 def test_defaults_target_the_weather_agents_standard_temperature_point(node):
     model = make_model(node)
     assert model.location == [LOCATION] and model.oat_point_name == 'air_temperature'
+    assert WeatherDotGovTemperatureForecastModel(location=LOCATION, transactive_node=node).weather_vip == 'platform.weather'
+    assert make_model(node, weather_vip='weather.central').weather_vip == 'weather.central'
     assert model.weather_file_path is None, 'service mode: no file replaces the service'
 
 
