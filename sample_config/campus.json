@@ -785,6 +785,7 @@
       "meter_points": null,
       "minimum_power": 0.0,
       "name": "CoR",
+      "sender": "tn.city@city",
       "transactive": true,
       "up_or_down": "upstream"
     },
@@ -819,6 +820,7 @@
       "meter_points": null,
       "minimum_power": -120.0,
       "name": "SMALL_OFFICE_ILC",
+      "sender": "tn.so.ilc@small_office_ilc",
       "transactive": true,
       "up_or_down": "downstream"
     },
@@ -853,6 +855,7 @@
       "meter_points": null,
       "minimum_power": -120.0,
       "name": "SMALL_OFFICE_DR",
+      "sender": "tn.so.dr@small_office_dr",
       "transactive": true,
       "up_or_down": "downstream"
     }

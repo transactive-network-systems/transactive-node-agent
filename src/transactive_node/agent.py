@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 from copy import deepcopy
 from datetime import datetime
@@ -83,6 +84,9 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     provides access to messages on the VOLTTRON message bus, and runs the loop.
     """
     SIMULATION_KEYS = ('simulation', 'simulation_start_time', 'simulation_one_hour_in_seconds', 'simulation_anchor_time')
+    SIGNAL_KEY_SUFFIX = '_incoming_transactive_signal'
+    SENDER_KEY = 'sender'                 # agent key of a neighbor entry: the identity its signals must arrive from
+    SENDER_MISMATCH_LOG_PERIOD = 60.0     # [s] one warning per presented sender per period, with the count suppressed
     ANCHOR_ENVIRONMENT_VARIABLE = 'TENT_SIMULATION_ANCHOR_TIME'
 
     def __init__(self, *args, **kwargs):
@@ -104,6 +108,9 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self.db_topic = 'TNS'
         self.subscribe_all_platforms = False
         self.topics: dict = {}
+        self._neighbor_senders: dict[str, str] = {}      # neighbor name -> identity its signals must be presented from
+        self._sender_forms_logged: set[str] = set()      # neighbors whose accepted sender form was logged
+        self._sender_mismatches: dict[str, dict] = {}    # presented sender -> {'since', 'count'} of dropped signals
         self.default_config.update({
             # Agent Configurations:
             "db_topic": self.db_topic,
@@ -152,11 +159,15 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         # below must not leak into it.
         contents = deepcopy(contents)
         self._apply_environment_anchor(contents)
+        # The neighbors' sender bindings are the agent's (the transport's), not TENT's: taken out before TENT sees the
+        # configuration, applied by the subscription wrapper.
+        neighbor_senders = self._extract_neighbor_senders(contents)
         TransactiveNode.validate_configuration(contents)  # raises (ConfigurationError) before anything is torn down
         simulation_settings = {key: contents.get(key) for key in self.SIMULATION_KEYS}
         identity = {}
         if self._configured:
             if action == 'UPDATE' and self.reconfigure(contents):
+                self._neighbor_senders = neighbor_senders
                 _log.info(f'Node {self.name!r} took the updated configuration in place; no rebuild.')
                 return
             if action == 'UPDATE' and simulation_settings == self._simulation_settings:
@@ -171,8 +182,72 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             self._teardown_node(**identity)
         self._configured = True
         self._simulation_settings = simulation_settings
+        self._neighbor_senders = neighbor_senders  # before configure_node: neighbors subscribe as they are built
         self.configure_node(contents)
         self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
+
+    def _extract_neighbor_senders(self, contents: dict) -> dict[str, str]:
+        """Take the `sender` key out of every neighbor entry (TENT's Neighbor.Config does not know it) and return the
+        bindings, neighbor name -> expected sender. A transactive neighbor without one is accepted from any sender,
+        which is said once here at WARNING."""
+        senders = {}
+        for entry in contents.get('neighbors') or []:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get('name')
+            sender = entry.pop(self.SENDER_KEY, None)
+            if sender is not None:
+                if not isinstance(sender, str) or not sender:
+                    raise ValueError(f'neighbor {name!r}: sender must be a non-empty string, the identity its signals '
+                                     f'arrive from ("identity@instance" or "identity"); got {sender!r}.')
+                senders[name] = sender
+            elif entry.get('transactive'):
+                _log.warning(f'Signals from {name!r} are not bound to a sender: any publisher on the bus may send them. '
+                             f'Set "sender" in the neighbor entry.')
+        return senders
+
+    # ------------------------------------------------------------------------------------------- sender identity
+
+    def _neighbor_of_signal_key(self, subscribe_key: str) -> str | None:
+        """The neighbor a transactive-signal subscribe key belongs to; None for any other key."""
+        if subscribe_key.endswith(self.SIGNAL_KEY_SUFFIX):
+            return subscribe_key[:-len(self.SIGNAL_KEY_SUFFIX)]
+        return None
+
+    def _sender_accepted(self, neighbor: str, presented: str, topic: str) -> bool:
+        """Whether a signal claiming to come from `neighbor` may be taken from the publisher the platform presented.
+
+        The binding is `identity@instance`, or a bare identity meaning any platform. A presented identity equal to the
+        binding is accepted; so is the bare tail of a qualified binding while the router presents bare identities (which
+        form arrived is logged once per neighbor at info). Anything else is dropped and reported (rate-limited).
+        """
+        expected = self._neighbor_senders.get(neighbor)
+        if expected is None:
+            return True
+        bare_expected = expected.split('@', 1)[0]
+        if presented == expected or ('@' in expected and presented == bare_expected):
+            if neighbor not in self._sender_forms_logged:
+                self._sender_forms_logged.add(neighbor)
+                form = 'qualified' if presented == expected and '@' in expected else 'bare'
+                _log.info(f'Signals from {neighbor!r} arrive from {presented!r} (the {form} form of the binding '
+                          f'{expected!r}).')
+            return True
+        self._report_sender_mismatch(neighbor, expected, presented, topic)
+        return False
+
+    def _report_sender_mismatch(self, neighbor: str, expected: str, presented: str, topic: str):
+        """One WARNING per presented sender per SENDER_MISMATCH_LOG_PERIOD, carrying the number suppressed since."""
+        now = time.monotonic()
+        window = self._sender_mismatches.get(presented)
+        if window is not None and now - window['since'] < self.SENDER_MISMATCH_LOG_PERIOD:
+            window['count'] += 1
+            return
+        suppressed = window['count'] if window else 0
+        more = f' ({suppressed} more from this sender dropped in the last {self.SENDER_MISMATCH_LOG_PERIOD:.0f} s)' \
+            if suppressed else ''
+        _log.warning(f'Dropped a transactive signal on "{topic}": it claims to come from {neighbor!r}, whose sender is '
+                     f'{expected!r}, but the platform presented {presented!r}.{more}')
+        self._sender_mismatches[presented] = {'since': now, 'count': 0}
 
     def _apply_environment_anchor(self, contents: dict):
         """Insert the shared simulation anchor from the environment when the configuration does not set one. Containers
@@ -257,8 +332,12 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
         # TODO: This really needs to be aware of the topic format that is being parsed, i.e., devices, weather, etc.
         #  We could do separate wrappers for each, or have configurable transforms.
-        def wrapper(_, __, ___, topic, headers, message):
+        neighbor = self._neighbor_of_signal_key(subscribe_key)
+
+        def wrapper(_, sender, __, topic, headers, message):
             if not (topic == subscription_topic or topic.startswith(subscription_topic + '/')):
+                return
+            if neighbor is not None and not self._sender_accepted(neighbor, sender, topic):
                 return
             try:
                 time_received = self._time_from_headers(headers)

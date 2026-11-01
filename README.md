@@ -45,6 +45,7 @@ runs; `sample_config/weather_dot_gov_temperature_forecast_model.json` is one `in
 |---|---|---|
 | `db_topic` | `TNS` | Root of every topic the agent derives (archive and signal topics below). The deployment uses `tns`. |
 | `subscribe_all_platforms` | `false` | Subscribe to the derived and configured topics on every platform of the federation, not only the local one. |
+| `neighbors[].sender` | none | In a neighbor entry: the identity the platform must present for signals claiming to come from that neighbor, `identity@instance` or a bare `identity` (any platform). Read and removed by the agent before TENT sees the entry; see the section on sender identity. |
 | `topics` | `{}` | Map of subscribe keys to topics. Components name a key (for example a meter point's `subscribe_key`); the agent subscribes to the topic. Entries here also override any derived topic of the same key; the value `IGNORE` disables a publish key. |
 
 ### Node keys (TENT)
@@ -180,6 +181,20 @@ per-run value (the container deployment mounts them read-only), set the environm
 `TENT_SIMULATION_ANCHOR_TIME` for the agent's process to an ISO 8601 time, aware or naive in the node's zone like the
 configuration value. It is used when the configuration has no `simulation_anchor_time`; a configured value always wins.
 The log records when the anchor came from the environment. An unparsable value fails the configuration.
+
+### Sender identity of transactive signals
+
+Signals arrive on `D/B/N` from any agent that may publish there, so each neighbor entry should carry `sender`, the
+identity the platform must present for that neighbor's signals: `identity@instance` (the agent's VIP identity and the
+instance name of the platform it runs on, as in `tn.city@city`), or the bare identity, which means any platform. The
+check is the agent's, in the subscription wrapper, before TENT's neighbor sees the message; nothing inside the message
+is trusted for it. While the router presents bare identities, a qualified binding also accepts its bare tail, and the
+log says once per neighbor which form arrived; when the router presents qualified identities nothing in the
+configuration changes and the bare form stops matching. A signal from another identity is dropped and logged at WARNING
+with the topic, the expected and the presented identity, at most one line per presented sender per minute with the
+number suppressed. A transactive neighbor without `sender` is accepted from anyone and is named once at WARNING when the
+configuration is applied. A changed binding is taken in place on an UPDATE. The deployed configurations bind every
+transactive neighbor; the city's bulk supplier is not a transactive neighbor and sends no signals.
 
 ## Topics
 

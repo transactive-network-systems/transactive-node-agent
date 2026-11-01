@@ -723,6 +723,7 @@
       "meter_points": null,
       "minimum_power": -20000,
       "name": "PNNL_Campus",
+      "sender": "tn.campus@campus",
       "transactive": true,
       "up_or_down": "downstream"
     },

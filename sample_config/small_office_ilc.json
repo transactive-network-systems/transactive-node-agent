@@ -1746,6 +1746,7 @@
       ],
       "minimum_power": 0.0,
       "name": "PNNL_Campus",
+      "sender": "tn.campus@campus",
       "transactive": true,
       "up_or_down": "upstream"
     }
