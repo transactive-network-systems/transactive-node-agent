@@ -11,7 +11,7 @@ profile = "black"
 [tool.poetry]
 name = "volttron-transactive-node"
 version = "0.1.0"
-description = ""
+description = "VOLTTRON agent that runs a TENT transactive node on the message bus"
 authors = ["TENT Team <volttron@pnnl.gov>"]
 license = "Apache License 2.0"
 readme = "README.md"
@@ -31,8 +31,16 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.11"
 volttron-core = ">=2.0.0rc0"
-# tent (code/TENT in this project) is required and is installed into the platform with `vctl install-lib`
-# or `pip install -e ../TENT`; it is not on PyPI yet.
+gevent = ">=23.0"
+# tent (code/TENT in this project) is required and is not on PyPI. Install it into the platform's environment before
+# this agent, with `pip install -e ../TENT` or `vctl install-lib ../TENT`.
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.yapf]
 based_on_style = "pep8"
