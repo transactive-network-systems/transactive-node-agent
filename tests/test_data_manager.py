@@ -119,7 +119,10 @@ def test_records_queue_until_tables_are_registered_then_publish_as_one_batch():
     assert len(dm.archival_queue) == 0
 
     dm.archive_data([{'table_name': 'test_table', 'data': {'id': 'c', 'value': 3.0}}])
-    assert agent.published[1][1][0]['data']['id'] == 'c', 'once ready, each batch is published immediately'
+    assert len(agent.published) == 1, 'once ready, records wait for the next flush'
+    dm.flush()
+    assert agent.published[1][1][0]['data']['id'] == 'c'
+    dm.stop()
 
 
 def test_historian_error_is_not_hidden():
@@ -229,6 +232,7 @@ def test_rpc_partial_registers_and_drops_records_for_rejected_tables(caplog):
     with caplog.at_level(logging.ERROR, logger='transactive_node.data_manager'):
         dm.init_archive()
         dm.archive_data([record('other_table', 'y'), record('test_table', 'b'), record('other_table', 'z')])
+        dm.flush()
     assert dm.archive_ready and set(dm.rejected_tables) == {'other_table'}
     assert agent.records_published() == [[record('test_table', 'a')], [record('test_table', 'b')]]
     errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
@@ -252,6 +256,7 @@ def test_only_records_without_rejected_tables_are_published_when_a_batch_is_all_
     dm.add_tables([DEFINITION, OTHER])
     dm.init_archive()
     dm.archive_data([record('other_table', 'x')])
+    dm.flush()
     assert agent.records_published() == [], 'no empty batch goes out'
 
 
@@ -287,6 +292,7 @@ def test_pubsub_partial_and_error_follow_the_same_rules_as_rpc(caplog):
     with caplog.at_level(logging.ERROR, logger='transactive_node.data_manager'):
         dm.init_archive()
         dm.archive_data([record('other_table', 'x'), record('test_table', 'a')])
+        dm.flush()
     assert dm.archive_ready and set(dm.rejected_tables) == {'other_table'}
     assert agent.records_published() == [[record('test_table', 'a')]]
     assert any('definition differs' in r.getMessage() for r in caplog.records)
@@ -347,3 +353,111 @@ def test_status_that_is_not_a_mapping_is_ignored(caplog):
         with caplog.at_level(logging.WARNING, logger='transactive_node.data_manager'):
             dm.init_archive()
     assert any('not a mapping' in r.getMessage() for r in caplog.records)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Batched publishing on a timer
+# ----------------------------------------------------------------------------------------------------------------------
+
+def ready_dm(agent, **kwargs):
+    dm = VolttronDataManager(agent, historian_vip='tns.historian', **kwargs)
+    dm.add_tables([DEFINITION])
+    dm.init_archive()
+    return dm
+
+
+def test_publish_interval_and_batch_size_are_validated():
+    with pytest.raises(ValueError):
+        VolttronDataManager(FakeAgent(), historian_vip='tns.historian', publish_interval=0)
+    with pytest.raises(ValueError):
+        VolttronDataManager(FakeAgent(), historian_vip='tns.historian', max_batch_records=0)
+    dm = VolttronDataManager(FakeAgent(), historian_vip='tns.historian')
+    assert (dm.publish_interval, dm.max_batch_records) == (1.0, 1000)
+
+
+def test_archive_data_only_queues_and_flush_publishes_one_message_in_order():
+    agent = FakeAgent()
+    dm = ready_dm(agent)
+    for ident in 'abc':
+        dm.archive_data(record('test_table', ident))
+    dm.archive_data([record('test_table', 'd'), record('test_table', 'e')])
+    assert agent.records_published() == [] and len(dm.archival_queue) == 5
+    dm.flush()
+    assert agent.records_published() == [[record('test_table', i) for i in 'abcde']]
+    assert len(dm.archival_queue) == 0
+    dm.flush()
+    assert len(agent.records_published()) == 1, 'an empty queue publishes nothing'
+
+
+def test_flush_splits_large_queues_into_chunks_keeping_order():
+    agent = FakeAgent()
+    dm = ready_dm(agent, max_batch_records=4)
+    dm.archive_data([record('test_table', i) for i in range(10)])
+    dm.flush()
+    chunks = agent.records_published()
+    assert [len(c) for c in chunks] == [4, 4, 2]
+    assert [r['data']['id'] for c in chunks for r in c] == list(range(10))
+
+
+def test_nothing_is_published_before_ready_and_the_backlog_goes_out_once_on_init():
+    agent = FakeAgent()
+    dm = VolttronDataManager(agent, historian_vip='tns.historian')
+    dm.add_tables([DEFINITION])
+    dm.archive_data([record('test_table', 'a'), record('test_table', 'b')])
+    dm.flush()
+    assert agent.records_published() == [], 'flush before the historian has the tables publishes nothing'
+    dm.init_archive()
+    assert agent.records_published() == [[record('test_table', 'a'), record('test_table', 'b')]]
+    assert dm._flusher is not None and dm._flusher.func == dm._flush_periodically, 'the flusher greenlet is started'
+
+
+def test_failed_publish_requeues_at_the_front_without_raising(caplog):
+    agent = FakeAgent()
+    dm = ready_dm(agent, max_batch_records=2)
+    failures = {'left': 1}
+    original_publish = agent.publish
+
+    def flaky_publish(publish_key, message, date_time=None):
+        if publish_key == 'archive' and failures['left'] and message[0]['data']['id'] == 'c':
+            failures['left'] -= 1
+            raise ConnectionError('bus hiccup')
+        original_publish(publish_key, message, date_time)
+    agent.publish = flaky_publish
+    dm.archive_data([record('test_table', i) for i in 'abcde'])
+    with caplog.at_level(logging.ERROR, logger='transactive_node.data_manager'):
+        dm.flush()  # a,b go out; c,d fail; c,d,e return to the queue
+    assert agent.records_published() == [[record('test_table', 'a'), record('test_table', 'b')]]
+    assert [r['data']['id'] for r in dm.archival_queue] == ['c', 'd', 'e']
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and errors[0].exc_info is not None
+    dm.archive_data(record('test_table', 'f'))
+    dm.flush()
+    assert [r['data']['id'] for c in agent.records_published()[1:] for r in c] == ['c', 'd', 'e', 'f']
+
+
+def test_the_flusher_loop_sleeps_then_flushes_until_stopped(monkeypatch):
+    import transactive_node.data_manager as module
+    agent = FakeAgent()
+    dm = ready_dm(agent, publish_interval=2.5)
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        dm.archive_data(record('test_table', len(sleeps)))
+        if len(sleeps) == 3:
+            dm._flusher_stopped = True
+    monkeypatch.setattr(module.gevent, 'sleep', sleep)
+    dm._flush_periodically()
+    assert sleeps == [2.5, 2.5, 2.5]
+    assert [r['data']['id'] for c in agent.records_published() for r in c] == [1, 2, 3]
+
+
+def test_stop_kills_the_flusher_and_flushes_once_more():
+    agent = FakeAgent()
+    dm = ready_dm(agent)
+    flusher = dm._flusher
+    dm.archive_data(record('test_table', 'late'))
+    dm.stop()
+    assert flusher.dead and dm._flusher is None and dm._flusher_stopped
+    assert agent.records_published() == [[record('test_table', 'late')]]
+    dm.stop()  # idempotent

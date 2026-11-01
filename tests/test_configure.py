@@ -196,3 +196,17 @@ def test_environment_anchor_keeps_the_run_across_an_update(monkeypatch):
     first_id = agent.id
     agent.configure_main('config', 'UPDATE', deepcopy(contents))
     assert agent.id == first_id
+
+
+def test_teardown_on_update_stops_the_data_manager_and_flushes_its_queue():
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    first_dm = agent.data_manager
+    flusher = first_dm._flusher
+    first_dm.archive_data({'table_name': 'test_table', 'data': {'id': 'queued'}})
+    before = len(agent.vip.pubsub.published)
+    agent.configure_main('config', 'UPDATE', deepcopy(CONFIG))
+    assert flusher.dead and first_dm._flusher is None
+    flushed = [m for t, _, m in agent.vip.pubsub.published[before:] if t.endswith('/records')]
+    assert any(any(r.get('data', {}).get('id') == 'queued' for r in m) for m in flushed)
+    assert agent.data_manager is not first_dm and agent.data_manager._flusher is not None

@@ -189,6 +189,11 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             _log.info(f'Unsubscribing from topic: {prefix}')
             self.vip.pubsub.unsubscribe(peer='pubsub', prefix=prefix, callback=wrapper, all_platforms=all_platforms)
         self._subscriptions = []
+        # The data manager publishes queued archive records on a timer; stop it so the queue is flushed and no greenlet
+        # outlives the configuration. (TENT's DataManager base has no stop(); only VolttronDataManager defines one.)
+        stop = getattr(self._data_manager, 'stop', None)
+        if stop is not None:
+            stop()
         self._init_node_state(node_id=node_id, created=created)
 
     def state_machine_loop(self):

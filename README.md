@@ -76,6 +76,8 @@ The archive. The deployment uses `VolttronDataManager`:
 | `rpc_timeout` | `30` | Seconds to wait for one answer (an RPC reply or a status message). |
 | `rpc_retry_period` | `10` | Seconds between registration attempts while the historian does not answer. |
 | `rpc_total_timeout` | `300` | Seconds after which an unanswered registration is given up with an error; nothing is archived in that run. |
+| `publish_interval` | `1.0` | Seconds between publications of the queued archive records. |
+| `max_batch_records` | `1000` | Largest number of records in one archive message; a flush with more records is split into several messages, in order. |
 | `archive_key` | `archive` | Publish key the records go out under (see topics below). |
 
 Registration paths:
@@ -99,6 +101,10 @@ The status mapping (the RPC reply and the status message are the same shape):
   "message": "free text"
 }
 ```
+
+Records are not published one at a time. They are queued and published in batches: the backlog once registration
+succeeds, then everything queued every `publish_interval` seconds, in messages of at most `max_batch_records` records.
+A failed publication is logged and its records are kept for the next batch. Tearing the node down flushes the queue.
 
 `success` turns the archive on and publishes the records queued while waiting. `partial` turns the archive on too,
 logs one error per rejected table with its message and differences, and drops every record addressed to a rejected

@@ -162,7 +162,19 @@ def _install_fake_gevent():
                 raise Timeout()
             return self._value
 
-    gevent = _module('gevent', Timeout=Timeout, sleep=sleep)
+    class Greenlet:
+        """Records the target; never runs it (a looping target would spin with the no-op sleep)."""
+        def __init__(self, func, args, kwargs):
+            self.func, self.args, self.kwargs = func, args, kwargs
+            self.dead = False
+
+        def kill(self, *args, **kwargs):
+            self.dead = True
+
+    def spawn(func, *args, **kwargs):
+        return Greenlet(func, args, kwargs)
+
+    gevent = _module('gevent', Timeout=Timeout, sleep=sleep, spawn=spawn, Greenlet=Greenlet)
     gevent.event = _module('gevent.event', AsyncResult=AsyncResult)
 
 

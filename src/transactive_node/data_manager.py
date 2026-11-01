@@ -70,8 +70,12 @@ class VolttronDataManager(DataManager):
       seconds, and given up after `rpc_total_timeout`.
 
     Both paths yield the same reply: status "success" (archive on), "partial" (archive on; records for the rejected
-    tables are dropped, each table reported once) or "error" (raised; nothing is archived). Records produced before the
-    reply are queued and published as one batch once the archive is on.
+    tables are dropped, each table reported once) or "error" (raised; nothing is archived).
+
+    Records are never published one by one: archive_data only queues them. Once the archive is on, the start-up backlog
+    is published and a flusher greenlet publishes whatever has queued every `publish_interval` seconds, as one message
+    per flush split into chunks of at most `max_batch_records` records, in order. A failed publish is logged and the
+    records go back to the front of the queue for the next flush. stop() ends the flusher after a final flush.
     """
 
     ARCHIVE_KEY = 'archive'                      # publish key the agent maps to the node's records topic
@@ -81,7 +85,8 @@ class VolttronDataManager(DataManager):
 
     def __init__(self, parent, historian_vip: str, registration: str = 'rpc', external_platform: str = '',
                  rpc_timeout: float = 30.0, rpc_retry_period: float = 10.0, rpc_total_timeout: float = 300.0,
-                 archive_key: str = ARCHIVE_KEY, *args, **kwargs):
+                 publish_interval: float = 1.0, max_batch_records: int = 1000, archive_key: str = ARCHIVE_KEY,
+                 *args, **kwargs):
         # parent is the TransactiveNodeAgent (a VOLTTRON Agent). TransactiveNode passes it positionally and, like every
         # other configured component, also passes the node as the keyword `transactive_node`; the base class accepts it.
         super(VolttronDataManager, self).__init__(parent, *args, **kwargs)
@@ -96,7 +101,13 @@ class VolttronDataManager(DataManager):
         self.rpc_timeout: float = float(rpc_timeout)
         self.rpc_retry_period: float = float(rpc_retry_period)
         self.rpc_total_timeout: float = float(rpc_total_timeout)
+        self.publish_interval: float = float(publish_interval)
+        self.max_batch_records: int = int(max_batch_records)
+        if self.publish_interval <= 0 or self.max_batch_records < 1:
+            raise ValueError('publish_interval must be positive and max_batch_records at least 1.')
         self.archive_key: str = archive_key
+        self._flusher = None          # greenlet publishing the queue every publish_interval once the archive is on
+        self._flusher_stopped = False
         self.rejected_tables: dict[str, Mapping] = {}   # table name -> {"message", "differences"} from the historian
         self._dropped_tables_reported: set[str] = set()
         self._pending_request_id: str | None = None
@@ -137,7 +148,9 @@ class VolttronDataManager(DataManager):
                            f'{error!r}); retrying in {self.rpc_retry_period:.0f} s for up to {remaining:.0f} s more.')
                 gevent.sleep(self.rpc_retry_period)
         self._apply_registration_reply(reply, attempt)
-        self.archive_data()
+        self.flush()
+        self._flusher_stopped = False
+        self._flusher = gevent.spawn(self._flush_periodically)
 
     def _request_registration_by_pubsub(self, definitions: list) -> Mapping:
         """Publish one registration request and wait rpc_timeout seconds for the status that answers it."""
@@ -195,22 +208,54 @@ class VolttronDataManager(DataManager):
         self.archive_ready = True
 
     def archive_data(self, records: Mapping | Sequence | None = None):
-        """Queue records until the historian has the tables; then publish the queue and the new records as one batch.
-        Records for tables the historian rejected are dropped, with one error per table."""
-        if records is not None:
-            self.archival_queue.extend([records] if isinstance(records, Mapping) else records)
+        """Queue records for the flusher. Records for tables the historian rejected are dropped, with one error per
+        table. Nothing is published here."""
+        if records is None:
+            return
+        self.archival_queue.extend(r for r in ([records] if isinstance(records, Mapping) else records)
+                                   if self._accepted(r))
+
+    def _accepted(self, record) -> bool:
+        """False for a record addressed to a table the historian rejected; the first drop per table is an error log."""
+        table = record.get('table_name') if isinstance(record, Mapping) else None
+        if table not in self.rejected_tables:
+            return True
+        if table not in self._dropped_tables_reported:
+            self._dropped_tables_reported.add(table)
+            _log.error(f'Dropping records for archive table {table!r}, which historian {self.historian_address!r} '
+                       f'rejected: {self.rejected_tables[table].get("message")}')
+        return False
+
+    def flush(self):
+        """Publish everything queued, in order, as messages of at most max_batch_records records each. Nothing goes out
+        before the historian has the tables. If a publish fails, its records and the rest return to the front of the
+        queue for the next flush; the failure is logged, not raised."""
         if not self.archive_ready or not self.archival_queue:
             return
-        batch = []
-        while self.archival_queue:
-            record = self.archival_queue.popleft()
-            table = record.get('table_name') if isinstance(record, Mapping) else None
-            if table in self.rejected_tables:
-                if table not in self._dropped_tables_reported:
-                    self._dropped_tables_reported.add(table)
-                    _log.error(f'Dropping records for archive table {table!r}, which historian '
-                               f'{self.historian_address!r} rejected: {self.rejected_tables[table].get("message")}')
-                continue
-            batch.append(record)
-        if batch:
-            self.parent.publish(self.archive_key, message=batch)
+        # Records queued before the historian answered are filtered here; later ones were filtered as they arrived.
+        pending = [r for r in self.archival_queue if self._accepted(r)]
+        self.archival_queue.clear()
+        if not pending:
+            return
+        _log.debug(f'Publishing {len(pending)} archive records in chunks of {self.max_batch_records}.')
+        for start in range(0, len(pending), self.max_batch_records):
+            chunk = pending[start:start + self.max_batch_records]
+            try:
+                self.parent.publish(self.archive_key, message=chunk)
+            except Exception:
+                _log.exception(f'Publishing {len(chunk)} archive records failed; they are requeued for the next flush.')
+                self.archival_queue.extendleft(reversed(pending[start:]))
+                return
+
+    def _flush_periodically(self):
+        while not self._flusher_stopped:
+            gevent.sleep(self.publish_interval)
+            self.flush()
+
+    def stop(self):
+        """End the periodic flushing and publish what is still queued. Called when the node is torn down."""
+        self._flusher_stopped = True
+        flusher, self._flusher = self._flusher, None
+        if flusher is not None:
+            flusher.kill()
+        self.flush()
