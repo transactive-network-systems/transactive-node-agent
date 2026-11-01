@@ -50,7 +50,7 @@ runs; `sample_config/weather_dot_gov_temperature_forecast_model.json` is one `in
 | `simulation` | `false` | Run on a simulated clock. |
 | `simulation_start_time` | | Simulated time at the anchor. Required when `simulation` is true. |
 | `simulation_one_hour_in_seconds` | `3600` | Real seconds per simulated hour. |
-| `simulation_anchor_time` | node creation time | Real time at which simulated time equals `simulation_start_time`. Set it to the same value on every node of one simulation so nodes started at different times agree on the simulated time. |
+| `simulation_anchor_time` | `TENT_SIMULATION_ANCHOR_TIME` from the environment, else node creation time | Real time at which simulated time equals `simulation_start_time`. Set it to the same value on every node of one simulation so nodes started at different times agree on the simulated time (see the section on the environment below). |
 | `loop_sleep_duration` | `0.01` | Seconds the state-machine loop yields after each market's events and after each pass. |
 | `actor_id`, `organization_id` | `null` | Identity of the actor this node represents and of its business entity; archived. |
 
@@ -138,9 +138,20 @@ TENT classes are documented in TENT; the agent's own components take:
 ### Applying a changed configuration
 
 Storing a new `config` (an UPDATE) rebuilds the node: the state-machine greenlet is stopped, every subscription of the
-previous configuration is removed, all components are dropped, and the node is built again from the new contents. The
-rebuilt node is a new run with a new archive identity, and without `simulation_anchor_time` its simulated clock is
-re-anchored, exactly as a restart would.
+previous configuration is removed, all components are dropped, and the node is built again from the new contents.
+When the simulation settings (`simulation`, `simulation_start_time`, `simulation_one_hour_in_seconds`,
+`simulation_anchor_time`, compared as configured) are unchanged, the rebuilt node continues the same run: it keeps its
+identity and creation time, its archive row is appended as a new version, and the simulated clock keeps its anchor.
+When they changed, the rebuilt node is a new run with a new identity, and without an anchor its simulated clock is
+re-anchored. A NEW configuration is always a new run. The log says which happened.
+
+### Shared simulation anchor from the environment
+
+Every node of one simulation should use the same `simulation_anchor_time`. Where the configuration files cannot carry a
+per-run value (the container deployment mounts them read-only), set the environment variable
+`TENT_SIMULATION_ANCHOR_TIME` for the agent's process to an ISO 8601 time, aware or naive in the node's zone like the
+configuration value. It is used when the configuration has no `simulation_anchor_time`; a configured value always wins.
+The log records when the anchor came from the environment. An unparsable value fails the configuration.
 
 ## Topics
 

@@ -1,5 +1,9 @@
-"""configure_main: NEW builds the node; UPDATE tears the previous configuration down and rebuilds from a copy."""
+"""configure_main: NEW builds the node; UPDATE tears the previous configuration down and rebuilds from a copy, keeping
+the run identity when the simulation settings are unchanged; the simulation anchor may come from the environment."""
+import logging
 from copy import deepcopy
+
+import pytest
 
 from transactive_node.agent import TransactiveNodeAgent
 
@@ -45,13 +49,17 @@ def test_new_configuration_builds_the_node_and_starts_the_loop():
 def test_update_tears_down_the_previous_configuration_and_rebuilds():
     agent = TransactiveNodeAgent()
     contents = deepcopy(CONFIG)
+    contents['simulation'] = True
+    contents['simulation_start_time'] = '2017-07-03 00:00:00'
+    contents['simulation_one_hour_in_seconds'] = 100
     agent.configure_main('config', 'NEW', contents)
     first_id = agent.id
     first_subscriptions = list(agent.vip.pubsub.subscriptions)
     first_greenlet = agent.core.spawned[0]
     agent._stop_agent = True  # as onstop would leave it; a rebuilt node must run again
 
-    agent.configure_main('config', 'UPDATE', contents)  # the config store hands back the same contents
+    contents['simulation_one_hour_in_seconds'] = 200  # a changed simulation block: the rebuild is a new run
+    agent.configure_main('config', 'UPDATE', contents)
 
     assert first_greenlet.killed and agent._state_machine_greenlet is agent.core.spawned[1]
     assert not agent._stop_agent
@@ -108,3 +116,83 @@ def test_pubsub_registration_subscribes_to_the_status_topic_on_all_platforms_and
     agent.configure_main('config', 'UPDATE', contents)
     assert 'tns/archive/Campus/status' in {p for p, _, _ in pubsub.unsubscribed}
     assert len([p for p, _, _ in pubsub.subscriptions if p == 'tns/archive/Campus/status']) == 1
+
+
+SIMULATED = dict(CONFIG, simulation=True, simulation_start_time='2017-07-03 00:00:00',
+                 simulation_one_hour_in_seconds=100, simulation_anchor_time='2026-10-31T12:00:00+00:00')
+
+
+def test_update_with_unchanged_simulation_settings_continues_the_run(caplog):
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(SIMULATED))
+    first_id, first_created = agent.id, agent.real_time_created
+    changed = deepcopy(SIMULATED)
+    changed['neighbors'] = []  # anything but the simulation block
+    with caplog.at_level(logging.INFO, logger='transactive_node.agent'):
+        agent.configure_main('config', 'UPDATE', changed)
+    assert (agent.id, agent.real_time_created) == (first_id, first_created)
+    assert agent.neighbors == [] and agent.simulation_anchor_time.isoformat() == '2026-10-31T12:00:00+00:00'
+    assert any('same run' in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize('key, value', [('simulation_one_hour_in_seconds', 50),
+                                        ('simulation_start_time', '2017-07-04 00:00:00'),
+                                        ('simulation_anchor_time', '2026-10-31T13:00:00+00:00'),
+                                        ('simulation', False)])
+def test_update_with_changed_simulation_settings_is_a_new_run(key, value, caplog):
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(SIMULATED))
+    first_id = agent.id
+    changed = deepcopy(SIMULATED)
+    changed[key] = value
+    with caplog.at_level(logging.INFO, logger='transactive_node.agent'):
+        agent.configure_main('config', 'UPDATE', changed)
+    assert agent.id != first_id
+    assert any('new run' in r.getMessage() for r in caplog.records)
+
+
+def test_a_new_configuration_is_always_a_new_run():
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(SIMULATED))
+    first_id = agent.id
+    agent.configure_main('config', 'NEW', deepcopy(SIMULATED))
+    assert agent.id != first_id
+
+
+def test_anchor_comes_from_the_environment_when_the_configuration_has_none(monkeypatch, caplog):
+    monkeypatch.setenv('TENT_SIMULATION_ANCHOR_TIME', '2026-10-31T09:30:00+00:00')
+    contents = deepcopy(SIMULATED)
+    del contents['simulation_anchor_time']
+    agent = TransactiveNodeAgent()
+    with caplog.at_level(logging.INFO, logger='transactive_node.agent'):
+        agent.configure_main('config', 'NEW', contents)
+    assert agent.simulation_anchor_time.isoformat() == '2026-10-31T09:30:00+00:00'
+    assert 'simulation_anchor_time' not in contents, 'the caller\'s dict is untouched'
+    assert any('from the environment' in r.getMessage() for r in caplog.records)
+
+
+def test_configured_anchor_wins_over_the_environment(monkeypatch):
+    monkeypatch.setenv('TENT_SIMULATION_ANCHOR_TIME', '2026-10-31T09:30:00+00:00')
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(SIMULATED))
+    assert agent.simulation_anchor_time.isoformat() == '2026-10-31T12:00:00+00:00'
+
+
+def test_without_configuration_or_environment_the_anchor_is_the_node_creation_time(monkeypatch):
+    monkeypatch.delenv('TENT_SIMULATION_ANCHOR_TIME', raising=False)
+    contents = deepcopy(SIMULATED)
+    del contents['simulation_anchor_time']
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', contents)
+    assert agent.simulation_anchor_time == agent.real_time_created
+
+
+def test_environment_anchor_keeps_the_run_across_an_update(monkeypatch):
+    monkeypatch.setenv('TENT_SIMULATION_ANCHOR_TIME', '2026-10-31T09:30:00+00:00')
+    contents = deepcopy(SIMULATED)
+    del contents['simulation_anchor_time']
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(contents))
+    first_id = agent.id
+    agent.configure_main('config', 'UPDATE', deepcopy(contents))
+    assert agent.id == first_id

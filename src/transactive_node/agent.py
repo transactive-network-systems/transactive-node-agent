@@ -44,11 +44,13 @@ under Contract DE-AC05-76RL01830
 import gevent
 import json
 import logging
+import os
 import sys
 
 from copy import deepcopy
 from datetime import datetime
 from typing import Callable
+from uuid import UUID
 
 from tent.transactive_node import TransactiveNode
 from tent.utils.helpers import json_encoder, require_aware
@@ -80,19 +82,24 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     The Transactive Node Agent handles configuration of the node and its services,
     provides access to messages on the VOLTTRON message bus, and runs the loop.
     """
+    SIMULATION_KEYS = ('simulation', 'simulation_start_time', 'simulation_one_hour_in_seconds', 'simulation_anchor_time')
+    ANCHOR_ENVIRONMENT_VARIABLE = 'TENT_SIMULATION_ANCHOR_TIME'
+
     def __init__(self, *args, **kwargs):
         Agent.__init__(self, *args, **kwargs)
         self._configured = False
+        self._simulation_settings: dict | None = None  # the configured simulation block of the running configuration
         self._state_machine_greenlet = None
         self._subscriptions: list[tuple[str, Callable, bool]] = []  # (prefix, wrapper, all_platforms) registered
         self._init_node_state()
         self.vip.config.set_default("config", self.default_config)
         self.vip.config.subscribe(self.configure_main, actions=["NEW", "UPDATE"], pattern="config")
 
-    def _init_node_state(self):
-        """A fresh TransactiveNode (new identity and creation time, empty component lists, no data manager) with the
-        agent's own defaults on top. Called at construction and again when a configuration is torn down."""
-        TransactiveNode.__init__(self)
+    def _init_node_state(self, node_id: UUID | None = None, created: datetime | None = None):
+        """A fresh TransactiveNode (empty component lists, no data manager) with the agent's own defaults on top. The
+        node is a new one unless `node_id` and `created` hand it the identity of the one being replaced. Called at
+        construction and again when a configuration is torn down."""
+        TransactiveNode.__init__(self, node_id=node_id, created=created)
         self._stop_agent = False
         self.db_topic = 'TNS'
         self.subscribe_all_platforms = False
@@ -132,23 +139,48 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         """Build the node from the configuration store's `config`.
 
         An UPDATE is a full rebuild: the previous configuration is torn down first (loop stopped, bus subscriptions
-        dropped, every component forgotten) and the node is built again as if the agent had been restarted. The rebuilt
-        node is a new run: it has a new identity and archive row, and the simulation clock is re-anchored unless
-        simulation_anchor_time is configured.
+        dropped, every component forgotten) and the node is built again from the new contents. When the simulation
+        settings are unchanged the rebuilt node continues the same run: it keeps its identity and creation time, so its
+        archive row is appended as a new version and the simulated clock keeps its anchor. When they changed, or on a
+        NEW, the node is a new run.
         """
         _log.info('Received configuration {} signal: {}'.format(action, config_name))
-        if self._configured:
-            _log.info('Tearing down the previous node configuration before applying this one.')
-            self._teardown_node()
-        self._configured = True
         # TENT's configure consumes the dicts it is given (class_name and module_name are popped out of each component
         # configuration), so work on a copy: the config store hands over the same contents again on a later UPDATE.
-        self.configure_node(deepcopy(contents))
+        contents = deepcopy(contents)
+        self._apply_environment_anchor(contents)
+        simulation_settings = {key: contents.get(key) for key in self.SIMULATION_KEYS}
+        identity = {}
+        if self._configured:
+            if action == 'UPDATE' and simulation_settings == self._simulation_settings:
+                identity = {'node_id': self.id, 'created': self.real_time_created}
+                _log.info(f'Rebuilding node {self.name!r} for the updated configuration as the same run '
+                          f'(id {self.id}): the simulation settings are unchanged.')
+            elif action == 'UPDATE':
+                _log.info(f'Rebuilding node {self.name!r} for the updated configuration as a new run: '
+                          f'the simulation settings changed.')
+            else:
+                _log.info(f'Rebuilding node {self.name!r} as a new run: a {action} configuration is always a new run.')
+            self._teardown_node(**identity)
+        self._configured = True
+        self._simulation_settings = simulation_settings
+        self.configure_node(contents)
         self._state_machine_greenlet = self.core.spawn_later(5, self.state_machine_loop)
 
-    def _teardown_node(self):
+    def _apply_environment_anchor(self, contents: dict):
+        """Insert the shared simulation anchor from the environment when the configuration does not set one. Containers
+        cannot write a per-run anchor into their mounted configurations; the compose file sets it once for every node."""
+        if contents.get('simulation_anchor_time'):
+            return
+        anchor = os.environ.get(self.ANCHOR_ENVIRONMENT_VARIABLE)
+        if anchor:
+            contents['simulation_anchor_time'] = anchor
+            _log.info(f'simulation_anchor_time {anchor!r} taken from the environment ({self.ANCHOR_ENVIRONMENT_VARIABLE}).')
+
+    def _teardown_node(self, node_id: UUID | None = None, created: datetime | None = None):
         """Undo the current configuration: stop the state-machine greenlet, unsubscribe every prefix this configuration
-        registered, and reset the node to its unconfigured state (no components, no data manager, fresh identity)."""
+        registered, and reset the node to its unconfigured state (no components, no data manager). The reset node is
+        new unless `node_id` and `created` carry the identity over."""
         self._stop_agent = True
         greenlet, self._state_machine_greenlet = self._state_machine_greenlet, None
         if greenlet is not None and not greenlet.dead:
@@ -157,7 +189,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             _log.info(f'Unsubscribing from topic: {prefix}')
             self.vip.pubsub.unsubscribe(peer='pubsub', prefix=prefix, callback=wrapper, all_platforms=all_platforms)
         self._subscriptions = []
-        self._init_node_state()
+        self._init_node_state(node_id=node_id, created=created)
 
     def state_machine_loop(self):
         """Run market state-machine iterations until the agent stops.
