@@ -23,7 +23,7 @@
       "location": "",
       "temperature_point_name": "",
       "tmy_fallback_path": "",
-      "weather_file_path": "/home/volttron/configs/pasco_2017_dry_bulb_temperature.csv"
+      "weather_file_path": "/home/vuzer/configs/pasco_2017_dry_bulb_temperature.csv"
     }
   ],
   "local_assets": [

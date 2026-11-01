@@ -8,5 +8,5 @@
   "rpc_timeout": 15.0,
   "temperature_point_name": "air_temperature",
   "max_gap_time": 14400,
-  "tmy_fallback_path": "/home/volttron/configs/pasco_2017_dry_bulb_temperature.csv"
+  "tmy_fallback_path": "/home/vuzer/configs/pasco_2017_dry_bulb_temperature.csv"
 }
