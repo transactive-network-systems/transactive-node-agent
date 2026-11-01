@@ -138,7 +138,10 @@ TENT classes are documented in TENT; the agent's own components take:
   service fails or does not cover the market). One RPC is made per update; nothing retries. The service forecasts
   real time, so a simulated run uses TENT's `TemperatureForecastModel` with `weather_file_path` instead.
 - `TNSDirectRatioActuationManager` (inside a local asset's `actuation_manager`): `actuator_identity`, the agent that
-  answers `set_point` and `revert_point`.
+  answers `set_point(path, point_name, value)` and `revert_point(path, point_name)` (the platform actuator, or the
+  EnergyPlus agent installed as `platform.actuator` in the containers), and `rpc_timeout` (seconds, default 15). A
+  model's `actuation_key` is the point's full topic and is split at its last slash into the device path and the point
+  name.
 - `ILCActuationManager`: `ilc_target_topic`, the topic the ILC agent reads targets from.
 
 ### Applying a changed configuration
