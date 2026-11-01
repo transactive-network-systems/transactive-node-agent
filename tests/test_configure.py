@@ -255,3 +255,22 @@ def test_invalid_update_is_refused_before_the_running_node_is_touched():
     assert agent.id == first_id and agent.data_manager is first_dm and agent._configured
     assert agent.vip.pubsub.subscriptions == subscriptions_before and agent.vip.pubsub.unsubscribed == []
     assert not first_dm._flusher.dead
+
+
+def test_archive_records_with_non_finite_floats_go_out_as_tokens_through_the_agents_strict_json():
+    """The agent serialises with standard JSON only (allow_nan=False); the data manager encodes an inelastic vertex's
+    infinite price as the library's token first, so the record is published rather than dropped."""
+    import math
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    before = len(agent.vip.pubsub.published)
+    agent.data_manager.archive_data([
+        {'table_name': 'vertex', 'data': {'id': 'v1', 'price': math.inf, 'cost': math.nan, 'quantity': 0.0}},
+        {'table_name': 'vertex', 'data': {'id': 'v2', 'price': 0.1, 'cost': 0.0, 'quantity': 10.0}},
+    ])
+    agent.data_manager.flush()
+    (topic, _, message), = agent.vip.pubsub.published[before:]
+    assert topic == 'tns/archive/Campus/records'
+    assert message[0]['data'] == {'id': 'v1', 'price': {'$float': 'inf'}, 'cost': {'$float': 'nan'}, 'quantity': 0.0}
+    assert message[1]['data']['price'] == 0.1
+    assert not agent.data_manager.archival_queue, 'nothing dropped, nothing requeued'
