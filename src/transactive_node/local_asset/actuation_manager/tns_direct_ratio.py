@@ -42,6 +42,7 @@ under Contract DE-AC05-76RL01830
 """
 import gevent
 import logging
+import time
 
 from tent.config import ConfigModel, Setting
 from tent.utils.log import setup_logging
@@ -67,12 +68,19 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
 
     Calls: `set_point(path, point_name, value)`, which returns the value written and raises for an unknown point or a
     failed write; `revert_point(path, point_name)`, which returns 'SUCCESS' or 'FAILURE'.
+
+    The base class drives one point at a time (direct_actuate and direct_release per model). Each RPC round trip to the
+    EnergyPlus agent takes a good part of a second, and an office has twenty points, so the points of one market are
+    sent together: while the base class iterates, the calls are collected, then all of them are issued at once and the
+    replies collected with one overall `rpc_timeout`. A failed or unanswered point is logged on its own; the others
+    still complete. Which points are set, and to what, is unchanged; the order of log lines may differ.
     """
 
     class Config(DirectRatioActuationManager.Config):
         actuator_identity: str = Setting(..., min_length=1, reconfigurable=True,
                                          description='VIP identity of the agent answering set_point and revert_point.')
-        rpc_timeout: float = Setting(15.0, gt=0, reconfigurable=True, description='[s] wait for an RPC reply.')
+        rpc_timeout: float = Setting(15.0, gt=0, reconfigurable=True,
+                                     description='[s] wait for all of a market\'s RPC replies together.')
 
     def __init__(self, parent=None, occupancy_manager=None, transactive_node=None, config: ConfigModel | None = None,
                  **kwargs):
@@ -81,6 +89,8 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
                                                              transactive_node=transactive_node, config=cfg)
         self.actuator_identity: str = cfg.actuator_identity
         self.rpc_timeout: float = cfg.rpc_timeout
+        self._pending_sets: list | None = None      # (target_id, value) collected while the base class iterates
+        self._pending_reverts: list | None = None   # target_id collected while the base class iterates
 
     @staticmethod
     def split_point(target_id: str) -> tuple[str, str]:
@@ -90,24 +100,80 @@ class TNSDirectRatioActuationManager(DirectRatioActuationManager):
             raise ValueError(f'An actuation key must be <device path>/<point name>, got {target_id!r}.')
         return path, point_name
 
-    def direct_actuate(self, target_id, new_set_point):
-        path, point_name = self.split_point(target_id)
-        _log.debug(f'Setting {path}/{point_name} to {new_set_point} through {self.actuator_identity}.')
+    # --------------------------------------------------------------------------------- the base class's per-point calls
+
+    def actuate(self, mkt):
+        self._pending_sets = []
         try:
-            self.tn.vip.rpc.call(self.actuator_identity, 'set_point', path, point_name,
-                                 new_set_point).get(timeout=self.rpc_timeout)
-        except (RemoteError, gevent.Timeout, errors.VIPError) as error:
-            _log.error(f'Failed to set {path}/{point_name} to {new_set_point} through {self.actuator_identity}: '
-                       f'{type(error).__name__}: {error}')
+            super(TNSDirectRatioActuationManager, self).actuate(mkt)
+        finally:
+            pending, self._pending_sets = self._pending_sets, None
+        if pending:
+            self.set_points(pending)
+
+    def release(self, mkt):
+        self._pending_reverts = []
+        try:
+            super(TNSDirectRatioActuationManager, self).release(mkt)
+        finally:
+            pending, self._pending_reverts = self._pending_reverts, None
+        if pending:
+            self.revert_points(pending)
+
+    def direct_actuate(self, target_id, new_set_point):
+        if self._pending_sets is not None:
+            self._pending_sets.append((target_id, new_set_point))
+        else:
+            self.set_points([(target_id, new_set_point)])
 
     def direct_release(self, target_id):
-        path, point_name = self.split_point(target_id)
-        try:
-            reply = self.tn.vip.rpc.call(self.actuator_identity, 'revert_point', path,
-                                         point_name).get(timeout=self.rpc_timeout)
-        except (RemoteError, gevent.Timeout, errors.VIPError) as error:
-            _log.error(f'Failed to revert {path}/{point_name} through {self.actuator_identity}: '
-                       f'{type(error).__name__}: {error}')
-            return
-        if reply != 'SUCCESS':
-            _log.error(f'Actuator {self.actuator_identity} did not revert {path}/{point_name}: reply {reply!r}.')
+        if self._pending_reverts is not None:
+            self._pending_reverts.append(target_id)
+        else:
+            self.revert_points([target_id])
+
+    # ---------------------------------------------------------------------------------------- the concurrent batches
+
+    def set_points(self, targets: list[tuple[str, float]]):
+        """Issue set_point for every (actuation key, value) at once, then collect the replies within rpc_timeout."""
+        issued = []
+        for target_id, value in targets:
+            path, point_name = self.split_point(target_id)
+            _log.debug(f'Setting {path}/{point_name} to {value} through {self.actuator_identity}.')
+            try:
+                result = self.tn.vip.rpc.call(self.actuator_identity, 'set_point', path, point_name, value)
+            except (RemoteError, errors.VIPError) as error:
+                self._report(f'set {path}/{point_name} to {value}', error)
+                continue
+            issued.append((f'{path}/{point_name}', value, result))
+        deadline = time.monotonic() + self.rpc_timeout
+        for point, value, result in issued:
+            try:
+                result.get(timeout=max(0.0, deadline - time.monotonic()))
+            except (RemoteError, gevent.Timeout, errors.VIPError) as error:
+                self._report(f'set {point} to {value}', error)
+
+    def revert_points(self, targets: list[str]):
+        """Issue revert_point for every actuation key at once, then collect the replies within rpc_timeout; a reply
+        other than SUCCESS is an error."""
+        issued = []
+        for target_id in targets:
+            path, point_name = self.split_point(target_id)
+            try:
+                result = self.tn.vip.rpc.call(self.actuator_identity, 'revert_point', path, point_name)
+            except (RemoteError, errors.VIPError) as error:
+                self._report(f'revert {path}/{point_name}', error)
+                continue
+            issued.append((f'{path}/{point_name}', result))
+        deadline = time.monotonic() + self.rpc_timeout
+        for point, result in issued:
+            try:
+                reply = result.get(timeout=max(0.0, deadline - time.monotonic()))
+            except (RemoteError, gevent.Timeout, errors.VIPError) as error:
+                self._report(f'revert {point}', error)
+                continue
+            if reply != 'SUCCESS':
+                _log.error(f'Actuator {self.actuator_identity} did not revert {point}: reply {reply!r}.')
+
+    def _report(self, what: str, error: Exception):
+        _log.error(f'Failed to {what} through {self.actuator_identity}: {type(error).__name__}: {error}')
