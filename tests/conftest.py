@@ -99,6 +99,10 @@ class FakeGreenlet:
 class FakeCore:
     def __init__(self):
         self.spawned = []
+        self.stopped = False
+
+    def stop(self, *args, **kwargs):
+        self.stopped = True
 
     def spawn(self, func, *args, **kwargs):
         greenlet = FakeGreenlet(func, args, kwargs)

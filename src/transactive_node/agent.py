@@ -352,6 +352,19 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         if took > self._slowest_step:
             self._slowest_market, self._slowest_step = market.name, took
 
+    def on_archive_unavailable(self, error: Exception):
+        """The data manager's registration with the historian failed for good (see VolttronDataManager.init_archive). A
+        node configured to archive must not run silently without an archive: the failure is logged at ERROR naming the
+        historian and the attempts, and the agent stops."""
+        data_manager = self._data_manager
+        historian = getattr(data_manager, 'historian_address', '?')
+        attempts = getattr(data_manager, 'registration_attempts', '?')
+        _log.error(f'Node {self.name!r} cannot archive: historian {historian!r} did not register its tables after '
+                   f'{attempts} attempt(s): {str(error).rstrip(".")}. A node configured to archive must not run without '
+                   f'one; stopping the agent.')
+        self._stop_agent = True
+        self.core.stop()
+
     @Core.receiver('onstop')
     def onstop(self, _, **__):
         self._stop_agent = True

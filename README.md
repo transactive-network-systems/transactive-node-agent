@@ -87,7 +87,7 @@ The archive. The deployment uses `VolttronDataManager`:
 | `historian_vip` | required | VIP identity of the Application Historian (see "Deploying with the Application Historian" below). |
 | `registration` | `rpc` | How the node registers its archive table definitions with the historian before publishing: `rpc` or `pubsub` (below). Any other value is an error. |
 | `external_platform` | `""` | Platform the historian runs on, for the `rpc` path in a federation. The modular platform has no cross-platform RPC, so a remote historian needs the `pubsub` path; the key then only documents where the historian is. |
-| `rpc_timeout` | `30` | Seconds to wait for one answer (an RPC reply or a status message). |
+| `rpc_timeout` | `30` for `rpc`, `10` for `pubsub` | Seconds to wait for one answer (an RPC reply or a status message). |
 | `rpc_retry_period` | `10` | Seconds between registration attempts while the historian does not answer. |
 | `rpc_total_timeout` | `300` | Seconds after which an unanswered registration is given up with an error; nothing is archived in that run. |
 | `publish_interval` | `1.0` | Seconds between publications of the queued archive records. |
@@ -166,6 +166,16 @@ TENT classes are documented in TENT; the agent's own components take:
   model's `actuation_key` is the point's full topic and is split at its last slash into the device path and the point
   name.
 - `ILCActuationManager`: `ilc_target_topic`, the topic the ILC agent reads targets from.
+
+### Start-up order
+
+Applying a configuration builds the node and schedules the state machine; it does not wait for the historian. The
+data manager starts registering the node's archive tables in a greenlet of its own and returns, so the first state
+machine tick runs on time against the shared simulation anchor whether or not the historian or the federation route is
+up yet. Records produced meanwhile queue and go out with the first flush once the historian has answered. When the
+registration fails for good (no answer within `rpc_total_timeout`, or an error status) the agent logs the failure at
+ERROR naming the historian and the attempts and stops itself: a node configured to archive does not run without an
+archive. Without `rpc_timeout` in the data manager block the pubsub path waits 10 s per attempt and the RPC path 30 s.
 
 ### Applying a changed configuration
 

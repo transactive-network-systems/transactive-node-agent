@@ -28,9 +28,18 @@ def prefixes(pubsub):
     return sorted(prefix for prefix, _, _ in pubsub.subscriptions)
 
 
+def complete_registration(agent):
+    """Run the data manager's registration greenlet to its end (configure_main only starts it)."""
+    greenlet = agent.data_manager._registration
+    assert greenlet is not None, 'no registration in progress'
+    greenlet.func(*greenlet.args, **greenlet.kwargs)
+
+
 def test_new_configuration_builds_the_node_and_starts_the_loop():
     agent = TransactiveNodeAgent()
     agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    assert agent.vip.rpc.calls == [] and not agent.data_manager.archive_ready, 'registration is not waited for'
+    complete_registration(agent)
 
     assert agent.name == 'Campus' and [m.name for m in agent.meter_points] == ['Meter']
     assert [n.name for n in agent.neighbors] == ['CoR']
@@ -59,7 +68,9 @@ def test_update_tears_down_the_previous_configuration_and_rebuilds():
     agent._stop_agent = True  # as onstop would leave it; a rebuilt node must run again
 
     contents['simulation_one_hour_in_seconds'] = 200  # a changed simulation block: the rebuild is a new run
+    complete_registration(agent)
     agent.configure_main('config', 'UPDATE', contents)
+    complete_registration(agent)
 
     assert first_greenlet.killed and agent._state_machine_greenlet is agent.core.spawned[1]
     assert not agent._stop_agent
@@ -107,6 +118,7 @@ def test_pubsub_registration_subscribes_to_the_status_topic_on_all_platforms_and
     pubsub.publish = answer_definitions
 
     agent.configure_main('config', 'NEW', contents)
+    complete_registration(agent)
     status_subscriptions = [(p, a) for p, _, a in pubsub.subscriptions if p == 'tns/archive/Campus/status']
     assert status_subscriptions == [('tns/archive/Campus/status', True)], 'subscribed everywhere, regardless of the node setting'
     assert all(not a for p, _, a in pubsub.subscriptions if p != 'tns/archive/Campus/status')
@@ -202,6 +214,7 @@ def test_environment_anchor_keeps_the_run_across_an_update(monkeypatch):
 def test_teardown_on_update_stops_the_data_manager_and_flushes_its_queue():
     agent = TransactiveNodeAgent()
     agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    complete_registration(agent)
     first_dm = agent.data_manager
     flusher = first_dm._flusher
     first_dm.archive_data({'table_name': 'test_table', 'data': {'id': 'queued'}})
@@ -212,7 +225,7 @@ def test_teardown_on_update_stops_the_data_manager_and_flushes_its_queue():
     assert flusher.dead and first_dm._flusher is None
     flushed = [m for t, _, m in agent.vip.pubsub.published[before:] if t.endswith('/records')]
     assert any(any(r.get('data', {}).get('id') == 'queued' for r in m) for m in flushed)
-    assert agent.data_manager is not first_dm and agent.data_manager._flusher is not None
+    assert agent.data_manager is not first_dm and agent.data_manager._registration is not None
 
 
 def test_update_that_changes_only_reconfigurable_fields_is_taken_in_place(caplog):
@@ -246,6 +259,7 @@ def test_invalid_update_is_refused_before_the_running_node_is_touched():
     from tent.config import ConfigurationError
     agent = TransactiveNodeAgent()
     agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    complete_registration(agent)
     first_id, first_dm = agent.id, agent.data_manager
     subscriptions_before = list(agent.vip.pubsub.subscriptions)
     bad = deepcopy(CONFIG)
@@ -263,6 +277,7 @@ def test_archive_records_with_non_finite_floats_go_out_as_tokens_through_the_age
     import math
     agent = TransactiveNodeAgent()
     agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    complete_registration(agent)
     before = len(agent.vip.pubsub.published)
     agent.data_manager.archive_data([
         {'table_name': 'vertex', 'data': {'id': 'v1', 'price': math.inf, 'cost': math.nan, 'quantity': 0.0}},
@@ -286,3 +301,44 @@ def test_slow_iteration_warning_is_an_agent_key_read_and_stripped():
     contents['slow_iteration_warning'] = 0
     with pytest.raises(ValueError, match='slow_iteration_warning must be a positive number'):
         agent.configure_main('config', 'UPDATE', contents)
+
+
+# --- start-up order: the registration does not hold the node -------------------------------------------------------------
+
+def test_registration_does_not_delay_the_first_tick_and_its_final_failure_stops_the_agent(monkeypatch, caplog):
+    import volttron_archivable.data_manager as library
+    clock = {'now': 1000.0}
+    monkeypatch.setattr(library.time, 'monotonic', lambda: clock['now'])
+    monkeypatch.setattr(library.gevent, 'sleep', lambda seconds: clock.__setitem__('now', clock['now'] + seconds))
+    contents = deepcopy(CONFIG)
+    contents['data_manager'] = {'class_name': 'VolttronDataManager', 'module_name': 'volttron_archivable.data_manager',
+                                'historian_vip': 'tns.historian', 'external_platform': 'central',
+                                'registration': 'pubsub', 'rpc_retry_period': 10, 'rpc_total_timeout': 25}
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', contents)  # the historian never answers on the status topic
+
+    assert clock['now'] == 1000.0, 'configure_main waited for nothing'
+    assert agent.data_manager.rpc_timeout == 10.0, 'the pubsub path waits 10 s per attempt by default'
+    (loop,) = agent.core.spawned
+    assert loop.func == agent.state_machine_loop and loop.delay == 5, 'the state machine is scheduled as always'
+    agent._timed_iteration()  # the first tick runs while the registration is still pending
+    assert not agent.data_manager.archive_ready and agent.data_manager._registration is not None
+
+    with caplog.at_level(logging.ERROR, logger='transactive_node.agent'):
+        complete_registration(agent)  # three unanswered attempts, then the deadline
+    assert agent.core.stopped and agent._stop_agent
+    errors = [r.getMessage() for r in caplog.records
+              if r.levelno == logging.ERROR and r.name == 'transactive_node.agent']
+    assert len(errors) == 1 and "'tns.historian@central'" in errors[0] and '4 attempt(s)' in errors[0]
+    assert 'stopping the agent' in errors[0]
+    assert agent.data_manager.archive_unavailable
+
+
+def test_on_archive_unavailable_names_the_historian_and_stops(caplog):
+    agent = TransactiveNodeAgent()
+    agent.configure_main('config', 'NEW', deepcopy(CONFIG))
+    with caplog.at_level(logging.ERROR, logger='transactive_node.agent'):
+        agent.on_archive_unavailable(RuntimeError('bad types'))
+    assert agent.core.stopped and agent._stop_agent
+    (message,) = [r.getMessage() for r in caplog.records if r.name == 'transactive_node.agent' and r.levelno == logging.ERROR]
+    assert "'tns.historian'" in message and 'bad types' in message
