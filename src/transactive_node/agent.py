@@ -94,6 +94,7 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     # Host keys (see transactive_node.host_keys) whose change cannot be taken in place: the topics and subscriptions
     # derive from them, so the node is rebuilt.
     REBUILDING_HOST_KEYS = frozenset({'db_topic', 'subscribe_all_platforms', 'topics'})
+    SLOW_PUBLISH_WARNING = 1.0  # [s] a publish call longer than this is logged; it should take milliseconds
     ANCHOR_ENVIRONMENT_VARIABLE = 'TENT_SIMULATION_ANCHOR_TIME'
 
     def __init__(self, *args, **kwargs):
@@ -381,7 +382,12 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         if publish_topic:
             if publish_topic == 'IGNORE':
                 return
+            started = time.monotonic()
             self.vip.pubsub.publish(peer='pubsub', topic=publish_topic, headers=headers, message=msg)
+            took = time.monotonic() - started
+            if took > self.SLOW_PUBLISH_WARNING:
+                _log.warning(f'Publishing to {publish_topic!r} took {took:.1f} s (the publish call itself: the '
+                             f'platform\'s authorization check and the hand-off to the router).')
         else:
             _log.warning(f'Attempted to publish to unknown publish_key: {publish_key}')
 
