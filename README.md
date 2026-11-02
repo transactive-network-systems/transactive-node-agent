@@ -239,7 +239,14 @@ With `db_topic` D, node name N and a neighbor named B:
 | `D/B/N` | subscribed | Transactive signals from neighbor B to this node. |
 | `topics[key]` | subscribed | Device data for the component that names `key`; `devices/` and `analysis/` messages are unwrapped to their first element (the point values). |
 
-Publications carry `Date` and `TimeStamp` headers with the node's current time (simulated when simulating). On
+Publications carry `Date` and `TimeStamp` headers with the node's current time (simulated when simulating). The
+node's components publish through the agent's `publish`, which serialises the message (a value that is not JSON, such
+as an infinite number, is an error to the caller) and queues it; one sender greenlet calls the platform's publish for
+the queued messages in order, so the order of publications is kept exactly, across topics, while the state machine
+goes on without waiting for the platform's two round trips per publish. The sender logs a publish call longer than a
+second, a queue deeper than twenty messages (at most once a minute) and, at debug level, the drain after such a
+warning; a publish the platform refuses is logged with its topic and the next message still goes out. Stopping the
+agent publishes what is still queued. On
 subscriptions the `TimeStamp` header is the time of the reading; a missing header falls back to the node's clock, a
 naive timestamp is rejected. A subscription to a topic receives that topic and topics below it only: a subscription
 to `.../HP1` does not receive `.../HP10`, although the platform matches both by prefix.

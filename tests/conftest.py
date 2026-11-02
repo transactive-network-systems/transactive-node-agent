@@ -178,8 +178,25 @@ def _install_fake_gevent():
     def spawn(func, *args, **kwargs):
         return Greenlet(func, args, kwargs)
 
+    class Event:
+        """set/clear/is_set; wait() returns the flag at once (the fake never blocks)."""
+        def __init__(self):
+            self._flag = False
+
+        def set(self):
+            self._flag = True
+
+        def clear(self):
+            self._flag = False
+
+        def is_set(self):
+            return self._flag
+
+        def wait(self, timeout=None):
+            return self._flag
+
     gevent = _module('gevent', Timeout=Timeout, sleep=sleep, spawn=spawn, Greenlet=Greenlet)
-    gevent.event = _module('gevent.event', AsyncResult=AsyncResult)
+    gevent.event = _module('gevent.event', AsyncResult=AsyncResult, Event=Event)
 
 
 def _install_fake_volttron():
@@ -283,3 +300,11 @@ def simulated_node():
 @pytest.fixture
 def node_factory():
     return FakeNode
+
+
+@pytest.fixture
+def eager_publish(monkeypatch):
+    """Publish synchronously: the sender greenlet's work is done inside publish(), for tests that look at what reached
+    the bus right after a call (the fake gevent never runs the sender)."""
+    from transactive_node.agent import TransactiveNodeAgent
+    monkeypatch.setattr(TransactiveNodeAgent, '_ensure_sender', lambda self: self._send_pending())

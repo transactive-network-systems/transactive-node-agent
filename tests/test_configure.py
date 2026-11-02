@@ -35,6 +35,7 @@ def complete_registration(agent):
     greenlet.func(*greenlet.args, **greenlet.kwargs)
 
 
+@pytest.mark.usefixtures('eager_publish')
 def test_new_configuration_builds_the_node_and_starts_the_loop():
     agent = TransactiveNodeAgent()
     agent.configure_main('config', 'NEW', deepcopy(CONFIG))
@@ -100,6 +101,7 @@ def test_update_with_a_changed_topic_subscribes_only_to_the_new_one():
     assert prefixes(agent.vip.pubsub) == ['devices/Campus/C/METERS'] and agent.neighbors == []
 
 
+@pytest.mark.usefixtures('eager_publish')
 def test_pubsub_registration_subscribes_to_the_status_topic_on_all_platforms_and_is_torn_down_on_update():
     agent = TransactiveNodeAgent()
     contents = deepcopy(CONFIG)
@@ -211,6 +213,7 @@ def test_environment_anchor_keeps_the_run_across_an_update(monkeypatch):
     assert agent.id == first_id
 
 
+@pytest.mark.usefixtures('eager_publish')
 def test_teardown_on_update_stops_the_data_manager_and_flushes_its_queue():
     agent = TransactiveNodeAgent()
     agent.configure_main('config', 'NEW', deepcopy(CONFIG))
@@ -271,6 +274,7 @@ def test_invalid_update_is_refused_before_the_running_node_is_touched():
     assert not first_dm._flusher.dead
 
 
+@pytest.mark.usefixtures('eager_publish')
 def test_archive_records_with_non_finite_floats_go_out_as_tokens_through_the_agents_strict_json():
     """The agent serialises with standard JSON only (allow_nan=False); the data manager encodes an inelastic vertex's
     infinite price as the library's token first, so the record is published rather than dropped."""

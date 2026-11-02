@@ -42,14 +42,16 @@ under Contract DE-AC05-76RL01830
 """
 
 import gevent
+from gevent.event import Event
 import json
 import logging
 import os
 import sys
 import time
 
-from copy import deepcopy
+from collections import deque
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime
 from typing import Callable
 from uuid import UUID
@@ -95,12 +97,22 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
     # derive from them, so the node is rebuilt.
     REBUILDING_HOST_KEYS = frozenset({'db_topic', 'subscribe_all_platforms', 'topics'})
     SLOW_PUBLISH_WARNING = 1.0  # [s] a publish call longer than this is logged; it should take milliseconds
+    PUBLISH_QUEUE_WARNING = 20          # messages waiting for the sender above which the depth is logged
+    PUBLISH_QUEUE_WARNING_PERIOD = 60.0  # [s] at most one depth warning per period
     ANCHOR_ENVIRONMENT_VARIABLE = 'TENT_SIMULATION_ANCHOR_TIME'
 
     def __init__(self, *args, **kwargs):
         Agent.__init__(self, *args, **kwargs)
         self._configured = False
         self._simulation_settings: dict | None = None  # the configured simulation block of the running configuration
+        # Outgoing publications wait here for the sender greenlet, which calls the platform's publish in order; the
+        # platform's two round trips per publish then overlap with the state machine's work instead of blocking it.
+        self._publish_queue: deque = deque()
+        self._publish_wake = Event()
+        self._sender = None
+        self._sender_stopped = False
+        self._publish_queue_warned = False
+        self._publish_queue_warned_at: float | None = None
         self._state_machine_greenlet = None
         self._subscriptions: list[tuple[str, Callable, bool]] = []  # (prefix, wrapper, all_platforms) registered
         self._init_node_state()
@@ -366,30 +378,81 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
         self._stop_agent = True
         self.core.stop()
 
+    @Core.receiver('onstart')
+    def onstart(self, _, **__):
+        self._ensure_sender()
+
     @Core.receiver('onstop')
     def onstop(self, _, **__):
         self._stop_agent = True
         self._state_machine_greenlet = None
+        self._stop_sender()
+
+    # ------------------------------------------------------------------------------------------------- publishing
 
     def publish(self, publish_key, message, date_time=None):
-        """Publish `message` on the topic mapped to `publish_key`. The message is serialised with TENT's encoder and
-        standard JSON only: a NaN or infinite number raises ValueError here, so nothing non-JSON leaves the agent."""
+        """Queue `message` for publication on the topic mapped to `publish_key` and return at once; the sender greenlet
+        publishes queued messages in order. The message is serialised here with TENT's encoder and standard JSON only:
+        a NaN or infinite number raises ValueError to the caller, so nothing non-JSON leaves the agent."""
         date_time = date_time if date_time else Timer.now()
         # DATE is what the base historian reads for record capture; TIMESTAMP is what TENT subscriptions read.
         headers = {headers_mod.DATE: date_time.isoformat(), headers_mod.TIMESTAMP: date_time.isoformat()}
         msg = json.loads(json_dumps(message))
         publish_topic = self.topics.get(publish_key)
-        if publish_topic:
-            if publish_topic == 'IGNORE':
-                return
+        if not publish_topic:
+            _log.warning(f'Attempted to publish to unknown publish_key: {publish_key}')
+            return
+        if publish_topic == 'IGNORE':
+            return
+        self._publish_queue.append((publish_topic, headers, msg))
+        depth = len(self._publish_queue)
+        if depth > self.PUBLISH_QUEUE_WARNING:
+            now = time.monotonic()
+            if (self._publish_queue_warned_at is None
+                    or now - self._publish_queue_warned_at >= self.PUBLISH_QUEUE_WARNING_PERIOD):
+                self._publish_queue_warned_at = now
+                _log.warning(f'{depth} publications are waiting for the sender (the platform takes long to accept '
+                             f'each publish); the newest is for {publish_topic!r}.')
+            self._publish_queue_warned = True
+        self._ensure_sender()
+        self._publish_wake.set()
+
+    def _ensure_sender(self):
+        if not self._sender_stopped and (self._sender is None or self._sender.dead):
+            self._sender = gevent.spawn(self._send_loop)
+
+    def _send_loop(self):
+        """The sender greenlet: wait to be woken, publish everything queued, repeat until stopped."""
+        while not self._sender_stopped:
+            self._publish_wake.wait()
+            self._publish_wake.clear()
+            self._send_pending()
+
+    def _send_pending(self):
+        """Publish every queued message, in order. A failure is logged with its topic and the message is dropped; the
+        next one still goes out. The slow-publish warning is measured here, around the platform's publish call."""
+        while self._publish_queue:
+            topic, headers, msg = self._publish_queue.popleft()
             started = time.monotonic()
-            self.vip.pubsub.publish(peer='pubsub', topic=publish_topic, headers=headers, message=msg)
+            try:
+                self.vip.pubsub.publish(peer='pubsub', topic=topic, headers=headers, message=msg)
+            except Exception:
+                _log.exception(f'Publishing to {topic!r} failed; the message is dropped.')
             took = time.monotonic() - started
             if took > self.SLOW_PUBLISH_WARNING:
-                _log.warning(f'Publishing to {publish_topic!r} took {took:.1f} s (the publish call itself: the '
-                             f'platform\'s authorization check and the hand-off to the router).')
-        else:
-            _log.warning(f'Attempted to publish to unknown publish_key: {publish_key}')
+                _log.warning(f'Publishing to {topic!r} took {took:.1f} s (the publish call itself: the platform\'s '
+                             f'authorization check and the hand-off to the router).')
+        if self._publish_queue_warned:
+            self._publish_queue_warned = False
+            _log.debug('The publication queue has drained.')
+
+    def _stop_sender(self):
+        """End the sender greenlet and publish what is still queued, so nothing queued at shutdown is lost."""
+        self._sender_stopped = True
+        sender, self._sender = self._sender, None
+        if sender is not None:
+            sender.kill()
+        self._send_pending()
 
     def issue_signal(self, recipient: str, signal_dict: dict):
         try:

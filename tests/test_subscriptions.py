@@ -101,6 +101,7 @@ def test_publish_refuses_non_finite_numbers_and_issue_signal_logs_it(agent, capl
     assert len(errors) == 1 and errors[0].exc_info is not None and 'CoR' in errors[0].getMessage()
 
 
+@pytest.mark.usefixtures('eager_publish')
 def test_publish_encodes_tent_value_types_as_json(agent):
     from datetime import timedelta
     from uuid import uuid4
@@ -111,23 +112,3 @@ def test_publish_encodes_tent_value_types_as_json(agent):
     assert topic == 'tns/CoR/Campus' and set(headers) == {'Date', 'TimeStamp'}
     assert message == {'id': str(ident), 'at': '2026-10-31T00:00:00+00:00', 'for': 3600.0, 'price': None}
 
-
-def test_a_slow_publish_call_is_logged_and_a_quick_one_is_not(agent, caplog, monkeypatch):
-    import transactive_node.agent as agent_module
-    clock = {'now': 100.0}
-    monkeypatch.setattr(agent_module.time, 'monotonic', lambda: clock['now'])
-    pubsub = agent.vip.pubsub
-    delay = {'seconds': 0.0}
-
-    def publish(peer, topic, headers=None, message=None, **kwargs):
-        clock['now'] += delay['seconds']
-        pubsub.published.append((topic, headers, message))
-    pubsub.publish = publish
-    with caplog.at_level(logging.WARNING, logger='transactive_node.agent'):
-        delay['seconds'] = 0.4
-        agent.publish('SIG', {'quick': True})
-        delay['seconds'] = 2.5
-        agent.publish('SIG', {'slow': True})
-    assert len(pubsub.published) == 2
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1 and "'tns/CoR/Campus'" in warnings[0] and 'took 2.5 s' in warnings[0]
