@@ -408,9 +408,9 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
 
     def publish_to_topic(self, publish_topic: str, headers: dict, message) -> None:
         """Queue an already serialisable `message` for publication on `publish_topic` itself (not a configured publish
-        key) and return at once; the sender greenlet publishes it in order with everything else queued. For components
-        that publish to a topic of their own configuration, such as the ILC actuation manager's demand targets, so that
-        their publishes never hold the state machine on the platform's per-publish round trips either."""
+        key) and return at once; the sender greenlet publishes it in order with everything else queued. Every
+        publication of the agent and its components goes through this queue or through publish(); nothing publishes
+        on the platform directly, so no caller waits on the platform's per-publish round trip."""
         self._publish_queue.append((publish_topic, headers, message))
         depth = len(self._publish_queue)
         if depth > self.PUBLISH_QUEUE_WARNING:

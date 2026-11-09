@@ -282,9 +282,13 @@ class FakeNode:
         self.data_manager = FakeDataManager()
         self.vip = FakeVip()
         self.subscriptions = {}
+        self.published = []  # (topic, headers, message) handed to publish_to_topic, as the agent queues them
 
     def register_subscription(self, subscribe_key, callback):
         self.subscriptions[subscribe_key] = callback
+
+    def publish_to_topic(self, topic, headers, message):
+        self.published.append((topic, headers, message))
 
 
 @pytest.fixture
