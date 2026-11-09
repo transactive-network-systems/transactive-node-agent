@@ -126,3 +126,16 @@ def test_the_send_loop_waits_publishes_and_stops(agent):
     agent._publish_wake.wait = wait
     agent._send_loop()
     assert [m['n'] for _, _, m in agent.vip.pubsub.published] == [1] and not agent._publish_wake.is_set()
+
+
+def test_publish_to_topic_queues_a_raw_topic_in_order_with_keyed_publishes(agent):
+    """A component's own topic (the ILC demand target) joins the one queue, so it neither waits on the platform nor
+    overtakes a signal queued before it."""
+    agent.vip.pubsub = SlowPubSub(delay=0.01)
+    agent.publish('SIG', {'n': 0})
+    agent.publish_to_topic('record/target_agent', {'Timestamp': 't'}, [{'value': {'target': -1.0}}])
+    agent.publish('SIG2', {'n': 2})
+    assert agent.vip.pubsub.published == [] and len(agent._publish_queue) == 3
+    agent._send_pending()
+    assert [t for t, _, _ in agent.vip.pubsub.published] == ['tns/Campus/CoR', 'record/target_agent', 'tns/Campus/Office']
+    assert agent.vip.pubsub.published[1][1:] == ({'Timestamp': 't'}, [{'value': {'target': -1.0}}])

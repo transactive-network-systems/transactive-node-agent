@@ -67,3 +67,18 @@ def test_the_target_topic_is_not_reconfigurable_and_unknown_keys_are_errors(node
         manager.reconfigure({'ilc_target_topic': 'record/other'})
     with pytest.raises(ConfigurationError, match="unknown configuration key 'ilc_topic'"):
         ILCActuationManager(ilc_topic='record/x', transactive_node=node, parent=Parent(), occupancy_manager=Occupancy())
+
+
+def test_a_node_with_a_publication_queue_gets_the_target_queued_not_published_in_line(node, fixed_now):
+    """24 direct publishes of one market's targets held the deployed ILC office's state machine for 20 s (T-74): a node
+    that offers publish_to_topic (the agent) receives the target there and nothing goes to the bus synchronously."""
+    queued = []
+    node.publish_to_topic = lambda topic, headers, message: queued.append((topic, headers, message))
+    manager = make_manager(node)
+    start = datetime(2026, 10, 31, 13, 0, tzinfo=timezone.utc)
+    manager.set_target(12.5, start, start + timedelta(hours=1))
+    assert node.vip.pubsub.published == []
+    topic, headers, message = queued[0]
+    assert topic == 'record/target_agent'
+    assert headers == {'Timestamp': fixed_now.isoformat(), 'Datetime': fixed_now.isoformat()}
+    assert message[0]['value']['target'] == -12.5 and message[1]['value'] == {'units': 'kW', 'tz': 'UTC'}

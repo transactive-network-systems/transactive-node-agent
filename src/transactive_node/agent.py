@@ -404,7 +404,14 @@ class TransactiveNodeAgent(Agent, TransactiveNode):
             return
         if publish_topic == 'IGNORE':
             return
-        self._publish_queue.append((publish_topic, headers, msg))
+        self.publish_to_topic(publish_topic, headers, msg)
+
+    def publish_to_topic(self, publish_topic: str, headers: dict, message) -> None:
+        """Queue an already serialisable `message` for publication on `publish_topic` itself (not a configured publish
+        key) and return at once; the sender greenlet publishes it in order with everything else queued. For components
+        that publish to a topic of their own configuration, such as the ILC actuation manager's demand targets, so that
+        their publishes never hold the state machine on the platform's per-publish round trips either."""
+        self._publish_queue.append((publish_topic, headers, message))
         depth = len(self._publish_queue)
         if depth > self.PUBLISH_QUEUE_WARNING:
             now = time.monotonic()

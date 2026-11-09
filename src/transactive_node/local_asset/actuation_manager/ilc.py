@@ -13,7 +13,9 @@ _log = logging.getLogger(__name__)
 
 
 class ILCActuationManager(ExternalTargetActuationManager):
-    """Hands each interval's scheduled power to an ILC agent as a demand target, published on `ilc_target_topic`."""
+    """Hands each interval's scheduled power to an ILC agent as a demand target, published on `ilc_target_topic` through
+    the node's publication queue (so the state machine does not wait on the platform), or directly when the node has
+    no queue."""
 
     class Config(ExternalTargetActuationManager.Config):
         ilc_target_topic: str = Setting(..., min_length=1, description='Topic the ILC agent reads demand targets from.')
@@ -51,6 +53,13 @@ class ILCActuationManager(ExternalTargetActuationManager):
             }
         ]
         _log.info(f'Setting ILC target to {target} between {start.isoformat()} and {end.isoformat()}')
+        # Through the agent's sender greenlet when the node has one: a market actuates one target per interval, and a
+        # platform publish is a synchronous round trip of up to a second, so 24 direct publishes held the state machine
+        # for 20 s on the deployed ILC office (T-74). The sender logs a failed publish itself.
+        enqueue = getattr(self.tn, 'publish_to_topic', None)
+        if enqueue is not None:
+            enqueue(self.ilc_target_topic, headers, target_message)
+            return
         try:
             self.tn.vip.pubsub.publish(peer='pubsub', topic=self.ilc_target_topic,
                                        headers=headers, message=target_message)
